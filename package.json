@@ -1,0 +1,33 @@
+{
+  "name": "worker-badge",
+  "version": "1.0.0",
+  "description": "작업자 자격 SBT 배지 + VC + 장비 접근 검증 + AI 숙련도 감지",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "demo": "hardhat run scripts/demo.js",
+    "start": "hardhat run app/server.js",
+    "sepolia:wallet": "hardhat wallet --network sepolia",
+    "sepolia:deploy": "hardhat badge:deploy --network sepolia",
+    "sepolia:issue": "hardhat badge:issue --network sepolia",
+    "sepolia:verify": "hardhat badge:verify --network sepolia",
+    "sepolia:status": "hardhat badge:status --network sepolia",
+    "phone": "hardhat run scripts/phone.js",
+    "sensor:analyze": "python ai/phone_experiment.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0",
+    "@vladmandic/face-api": "^1.7.15",
+    "cloudflared": "^0.7.3"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.6.1",
+    "hardhat": "^2.29.1",
+    "solc": "^0.8.24"
+  }
+}
