@@ -1,0 +1,136 @@
+{
+  "dataset": {
+    "sessions": 1200,
+    "operators": 120,
+    "session_sec": 180,
+    "hz": 10,
+    "split": {
+      "train": 720,
+      "val": 240,
+      "test": 240
+    }
+  },
+  "iforest": {
+    "threshold": 0.5863,
+    "per_session": {
+      "precision": 0.985,
+      "recall": 0.831,
+      "f1": 0.902,
+      "auc": 0.971,
+      "false_alarm_rate": 0.025,
+      "recall_by_style": {
+        "skilled": 0.025,
+        "novice": 0.675,
+        "risky": 0.988
+      }
+    },
+    "rolling3": {
+      "precision": 0.991,
+      "recall": 0.852,
+      "f1": 0.916,
+      "auc": 0.995,
+      "false_alarm_rate": 0.016
+    }
+  },
+  "random_forest": {
+    "macro_f1": 0.913,
+    "accuracy": 0.912,
+    "confusion": {
+      "labels": [
+        "skilled",
+        "novice",
+        "risky"
+      ],
+      "matrix": [
+        [
+          73,
+          7,
+          0
+        ],
+        [
+          12,
+          68,
+          0
+        ],
+        [
+          2,
+          0,
+          78
+        ]
+      ]
+    },
+    "binary": {
+      "precision": 0.954,
+      "recall": 0.912,
+      "f1": 0.933,
+      "auc": 0.982,
+      "false_alarm_rate": 0.087
+    },
+    "importance": {
+      "speed_p95": 0.287,
+      "turn_speed": 0.2,
+      "jerk_rms": 0.193,
+      "steer_wobble": 0.127,
+      "sharp_turn_rate": 0.049,
+      "raised_drive_ratio": 0.045,
+      "idle_ratio": 0.044,
+      "harsh_brake_rate": 0.036,
+      "harsh_accel_rate": 0.01,
+      "hesitation_rate": 0.008
+    }
+  },
+  "recommendation_top_course_by_style": {
+    "skilled": {
+      "기본 조작 실습 (조향·발진)": 2
+    },
+    "novice": {
+      "부드러운 가감속 운전": 9,
+      "기본 조작 실습 (조향·발진)": 41,
+      "적재물 높이·운반 자세": 4
+    },
+    "risky": {
+      "부드러운 가감속 운전": 20,
+      "회전 구간 감속·전도 방지": 51,
+      "구내 제한속도 준수": 1,
+      "적재물 높이·운반 자세": 7
+    }
+  },
+  "feature_means": {
+    "skilled": {
+      "harsh_accel_rate": 0.046,
+      "harsh_brake_rate": 0.125,
+      "sharp_turn_rate": 0.017,
+      "speed_p95": 1.933,
+      "turn_speed": 1.04,
+      "jerk_rms": 1.087,
+      "steer_wobble": 0.054,
+      "hesitation_rate": 0.533,
+      "raised_drive_ratio": 0.023,
+      "idle_ratio": 0.174
+    },
+    "novice": {
+      "harsh_accel_rate": 0.138,
+      "harsh_brake_rate": 0.375,
+      "sharp_turn_rate": 0.058,
+      "speed_p95": 1.562,
+      "turn_speed": 0.947,
+      "jerk_rms": 1.393,
+      "steer_wobble": 0.085,
+      "hesitation_rate": 0.817,
+      "raised_drive_ratio": 0.05,
+      "idle_ratio": 0.251
+    },
+    "risky": {
+      "harsh_accel_rate": 0.392,
+      "harsh_brake_rate": 1.071,
+      "sharp_turn_rate": 2.954,
+      "speed_p95": 2.751,
+      "turn_speed": 1.766,
+      "jerk_rms": 2.139,
+      "steer_wobble": 0.06,
+      "hesitation_rate": 0.367,
+      "raised_drive_ratio": 0.2,
+      "idle_ratio": 0.192
+    }
+  }
+}

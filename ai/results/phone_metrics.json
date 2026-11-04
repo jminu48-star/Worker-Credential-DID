@@ -1,0 +1,125 @@
+{
+  "scheme": "기록 5묶음 교차검증 (참가자 1명 — 사람 단위 검증은 아직 못 함)",
+  "by_person": false,
+  "sessions": 20,
+  "smooth": 10,
+  "rough": 10,
+  "participants": [
+    "민우"
+  ],
+  "method": "숙련 기준 z 점수 (log, 최댓값)",
+  "overall": {
+    "tp": 10,
+    "fp": 0,
+    "fn": 0,
+    "tn": 10,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "fpr": 0.0,
+    "auc": 1.0
+  },
+  "recall_ci95": [
+    0.722,
+    1
+  ],
+  "fpr_ci95": [
+    0,
+    0.278
+  ],
+  "per_group": [
+    {
+      "group": "묶음1",
+      "n": 4,
+      "threshold": 2.052,
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "tn": 1,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "auc": 1.0
+    },
+    {
+      "group": "묶음2",
+      "n": 4,
+      "threshold": 3.578,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 3,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "auc": 1.0
+    },
+    {
+      "group": "묶음3",
+      "n": 4,
+      "threshold": 2.179,
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "tn": 1,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "auc": 1.0
+    },
+    {
+      "group": "묶음4",
+      "n": 4,
+      "threshold": 5.019,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 3,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "auc": 1.0
+    },
+    {
+      "group": "묶음5",
+      "n": 4,
+      "threshold": 1.967,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "fpr": 0.0,
+      "auc": 1.0
+    }
+  ],
+  "iforest_comparison": {
+    "tp": 10,
+    "fp": 4,
+    "fn": 0,
+    "tn": 6,
+    "precision": 0.714,
+    "recall": 1.0,
+    "f1": 0.833,
+    "fpr": 0.4,
+    "auc": 0.91
+  },
+  "rough_mean_z": {
+    "acc_p95": 13.8,
+    "acc_rms": 15.6,
+    "jerk_rms": 13.3,
+    "gyro_p95": 12.0,
+    "gyro_rms": 15.5
+  },
+  "model_threshold": 2.225,
+  "score_range": {
+    "smooth_max": 2.3,
+    "rough_min": 15.46
+  }
+}
