@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>센서 실험 — WorkerBadge</title>
+<style>
+/* 휴대폰 센서 실측 실험: 휴대폰을 카트·RC카에 붙이고 부드럽게/거칠게 20초 기록 → 서버(ai/phone_data)에 저장 → AI 검증 */
+:root{--bg:#F3F4F6;--panel:#FFFFFF;--ink:#1B222C;--muted:#5F6B7A;--line:#DDE1E7;--amber:#F2A900;--amber-ink:#3A2A00;--steel:#1F6F8B;
+  --ok:#1E7B4C;--ok-bg:#E3F4EA;--no:#B8382C;--no-bg:#FBE8E6;--off:#8A93A0;--off-bg:#EEF0F3;--wait:#8A5A00;--wait-bg:#FFF2D6;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;--sans:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif}
+@media (prefers-color-scheme: dark){:root{--bg:#12161C;--panel:#1A2029;--ink:#E6E9EE;--muted:#9AA4B2;--line:#2C3440;--amber:#F2B624;--amber-ink:#2A1F00;--steel:#6FB3CC;
+  --ok:#6FD39E;--ok-bg:#16301F;--no:#F08A7E;--no-bg:#3A1C19;--off:#7D8695;--off-bg:#232A34;--wait:#F2C46A;--wait-bg:#33280F;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;background:#1B222C;color:#fff;position:sticky;top:0;z-index:2}
+header h1{font-size:16px;margin:0} header a{color:#F2B624;font-size:13px}
+main{padding:14px 16px 40px;max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.card h2{font-size:15px;margin:0 0 8px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+ol.how{margin:0;padding-left:20px;font-size:13.5px;color:var(--muted)} ol.how li{margin:2px 0}
+label.f{display:block;font-size:13px;color:var(--muted);margin:0 0 4px}
+input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit;font-size:17px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.seg button{border:2px solid var(--line);background:var(--bg);color:var(--ink);border-radius:12px;padding:12px 8px;font:inherit;font-weight:700;cursor:pointer}
+.seg button small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.seg button[aria-pressed="true"].s{border-color:var(--steel);background:color-mix(in srgb,var(--steel) 12%,var(--bg))}
+.seg button[aria-pressed="true"].r{border-color:var(--no);background:var(--no-bg)}
+.btn{border:0;border-radius:10px;padding:13px 14px;font:inherit;font-weight:700;background:var(--amber);color:var(--amber-ink);width:100%;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:wait}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:500}
+.btn:focus-visible,.seg button:focus-visible,input:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+.big{font:800 54px var(--mono);text-align:center;margin:4px 0}
+.state{text-align:center;font-weight:700;margin:0}
+canvas{width:100%;height:120px;display:block;background:var(--bg);border-radius:10px;margin-top:8px}
+.legend{font-size:12px;color:var(--muted);margin-top:4px} .legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin:0 4px 0 8px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:13.5px;margin:6px 0}
+.kv span:nth-child(even){font-family:var(--mono);text-align:right}
+.verdict{font-size:20px;font-weight:800;margin:2px 0 6px}
+.ok{color:var(--ok)} .no{color:var(--no)}
+.warn{font-size:13px;color:var(--muted);background:var(--off-bg);border-radius:8px;padding:8px 10px;margin:8px 0 0}
+.err{font-size:13px;color:var(--no);background:var(--no-bg);border-radius:8px;padding:8px 10px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:13.5px} th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left} td.n,th.n{text-align:right;font-family:var(--mono)}
+.mono{font-family:var(--mono);font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1>🧪 센서 실험</h1><a href="/worker">← 작업자 앱</a></header>
+<main>
+  <section class="card" id="need" hidden>
+    <h2>먼저 작업자 앱에서 등록해 주세요</h2>
+    <p class="sub">기록은 이 휴대폰 지갑으로 로그인한 사람만 올릴 수 있어요 (아무나 실험 데이터를 넣지 못하게).</p>
+    <a class="btn" href="/worker" style="display:block;text-align:center;text-decoration:none">작업자 앱 열기</a>
+  </section>
+
+  <div id="app" hidden>
+  <section class="card">
+    <h2>실험 방법</h2>
+    <ol class="how">
+      <li>휴대폰을 카트·의자·RC카에 <b>테이프로 단단히</b> 붙여요 (화면이 위로).</li>
+      <li>매번 <b>같은 코스</b>(예: 복도 10 m 왕복)를 20초 동안 움직여요.</li>
+      <li><b>부드럽게</b> = 천천히 출발·정지·회전 / <b>거칠게</b> = 급출발·급정지·급회전.</li>
+      <li>참가자마다 <b>부드럽게 10번 · 거칠게 10번</b>이 목표예요. 번갈아 하면 더 좋아요.</li>
+    </ol>
+  </section>
+
+  <section class="card" id="form">
+    <label class="f" for="who">참가자 이름</label>
+    <input id="who" maxlength="20" placeholder="예: 민우">
+    <div class="seg" role="group" aria-label="운전 방식">
+      <button class="s" id="bS" aria-pressed="true">🐢 부드럽게<small>천천히 출발·정지·회전</small></button>
+      <button class="r" id="bR" aria-pressed="false">⚡ 거칠게<small>급출발·급정지·급회전</small></button>
+    </div>
+    <button class="btn" id="go">기록 시작 (5초 뒤 시작 · 20초)</button>
+    <p class="err" id="err" hidden></p>
+  </section>
+
+  <section class="card" id="live" hidden aria-live="polite">
+    <p class="state" id="lState">준비</p>
+    <div class="big" id="lTime">5</div>
+    <canvas id="cv" width="560" height="120" aria-label="기록 중인 센서 값 그래프"></canvas>
+    <div class="legend"><i style="background:#C0392B"></i>가속도 크기 (m/s²)<i style="background:#1F6F8B"></i>회전 속도 (rad/s)</div>
+    <button class="btn ghost" id="stop" style="margin-top:10px">취소</button>
+  </section>
+
+  <section class="card" id="result" hidden aria-live="polite"></section>
+
+  <section class="card">
+    <h2>지금까지 모은 기록</h2>
+    <div id="stats"><p class="sub">불러오는 중…</p></div>
+  </section>
+  </div>
+</main>
+<script src="/vendor/ethers.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const RECORD_S = 20, COUNTDOWN_S = 5, TARGET = 10;
+const LABEL_KO = { smooth: "부드럽게", rough: "거칠게" };
+const store = { get() { try { return JSON.parse(localStorage.getItem("wb-wallet-v2")); } catch { return null; } },
+  set(v) { try { localStorage.setItem("wb-wallet-v2", JSON.stringify(v)); } catch {} } };
+const pref = { get(k) { try { return localStorage.getItem("wb-sensor-" + k); } catch { return null; } }, set(k, v) { try { localStorage.setItem("wb-sensor-" + k, v); } catch {} } };
+const REG_MESSAGE = (name, address, ts) => `WorkerBadge 작업자 등록\n이름: ${name}\n지갑 주소: ${address}\n시각: ${ts}`;
+let ME = store.get(), label = pref.get("label") === "rough" ? "rough" : "smooth", rec = null, timers = [], wake = null;
+
+async function post(p, body) {
+  const r = await fetch(p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json(); return { status: r.status, j };
+}
+async function relogin() { // 토큰이 만료됐으면 지갑 서명으로 다시 로그인 (작업자 앱과 같은 방식)
+  const w = new ethers.Wallet(ME.key), ts = Date.now();
+  const signature = await w.signMessage(REG_MESSAGE(ME.name || "", w.address, ts));
+  const { j } = await post("/api/register", { address: w.address, name: ME.name || "", ts, signature, code: "" });
+  if (!j.ok) throw new Error(j.error);
+  ME = { ...ME, token: j.data.token }; store.set(ME);
+}
+async function api(p, body) {
+  let { status, j } = await post(p, { ...body, token: ME.token });
+  if (status === 401) { await relogin(); ({ status, j } = await post(p, { ...body, token: ME.token })); }
+  if (!j.ok) throw new Error(j.error); return j.data;
+}
+
+function setLabel(l) { label = l; pref.set("label", l); $("bS").setAttribute("aria-pressed", l === "smooth"); $("bR").setAttribute("aria-pressed", l === "rough"); }
+$("bS").onclick = () => setLabel("smooth"); $("bR").onclick = () => setLabel("rough");
+
+function renderStats(s) {
+  const rows = Object.entries(s.participants || {});
+  $("stats").innerHTML = (rows.length ? `<table><thead><tr><th>참가자</th><th class="n">부드럽게</th><th class="n">거칠게</th></tr></thead><tbody>${
+    rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.smooth || 0}/${TARGET}</td><td class="n">${v.rough || 0}/${TARGET}</td></tr>`).join("")}</tbody></table>`
+    : '<p class="sub" style="margin:0">아직 기록이 없어요.</p>')
+    + `<p class="warn">${s.model ? `🤖 AI 모델 있음 — 부드럽게 기록 ${s.model.smooth}개 · ${s.model.participants}명으로 학습 (${esc(s.model.at)}). 새 기록은 올리자마자 판정돼요.`
+      : "🤖 아직 AI 모델이 없어요. 기록을 다 모은 뒤 PC에서 <b>python ai/phone_experiment.py</b> 를 실행하면 결과표가 나오고, 그 뒤 기록부터는 바로 판정돼요."}</p>`;
+}
+
+// ───── 센서 기록 ─────
+function onMotion(e) {
+  if (!rec || !rec.on) return;
+  const t = performance.now() / 1000 - rec.t0;
+  let ax, ay, az, src;
+  const a = e.acceleration;
+  if (a && a.x != null) { ax = a.x; ay = a.y; az = a.z; src = "acceleration"; }
+  else {
+    const g = e.accelerationIncludingGravity; if (!g || g.x == null) return;
+    const raw = [g.x, g.y, g.z]; // 중력 값이 따로 없으면 천천히 바뀌는 부분(중력)을 빼서 쓴다
+    rec.grav = rec.grav ? rec.grav.map((v, i) => 0.9 * v + 0.1 * raw[i]) : raw;
+    [ax, ay, az] = raw.map((v, i) => v - rec.grav[i]); src = "gravity-highpass";
+  }
+  if (![ax, ay, az].every(Number.isFinite)) return;
+  rec.events++; // 값이 실제로 들어온 이벤트만 센다 (PC는 이벤트가 와도 값이 비어 있음)
+  const r = e.rotationRate || {};
+  const row = [t, ax, ay, az, r.alpha || 0, r.beta || 0, r.gamma || 0].map((v) => Math.round(v * 1e4) / 1e4);
+  rec.src = src;
+  if (rec.recording) { rec.samples.push(row); rec.plot.push([Math.hypot(ax, ay, az), Math.hypot(row[4], row[5], row[6]) * Math.PI / 180]); }
+}
+function draw() {
+  const c = $("cv"), g = c.getContext("2d"), W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  const pts = rec ? rec.plot.slice(-RECORD_S * 60) : [];
+  const n = Math.max(1, RECORD_S * 60);
+  for (const [k, col, max] of [[0, "#C0392B", 8], [1, "#1F6F8B", 4]]) {
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    pts.forEach((p, i) => { const x = (i / n) * W, y = H - Math.min(1, p[k] / max) * (H - 6) - 3; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  }
+}
+function clearTimers() { timers.forEach(clearInterval); timers = []; }
+function stopAll() {
+  clearTimers(); window.removeEventListener("devicemotion", onMotion); rec = null;
+  try { wake && wake.release(); } catch {} wake = null;
+  $("live").hidden = true; $("form").hidden = false; $("go").disabled = false;
+}
+function showErr(m) { $("err").textContent = m; $("err").hidden = false; }
+
+$("go").onclick = async () => {
+  $("err").hidden = true; $("result").hidden = true;
+  const who = $("who").value.trim();
+  if (!who) return showErr("참가자 이름을 넣어 주세요");
+  pref.set("who", who);
+  try { // iPhone 은 버튼을 누른 순간에 센서 권한을 물어야 한다
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      const p = await DeviceMotionEvent.requestPermission();
+      if (p !== "granted") return showErr("동작 센서 권한이 필요해요. 다시 눌러서 '허용'을 선택해 주세요");
+    }
+  } catch { return showErr("센서 권한을 요청하지 못했어요. https 주소(인터넷 주소)로 열었는지 확인해 주세요"); }
+  if (typeof DeviceMotionEvent === "undefined") return showErr("이 브라우저는 동작 센서를 지원하지 않아요");
+  try { navigator.wakeLock && navigator.wakeLock.request("screen").then((l) => { wake = l; }).catch(() => {}); } catch {} // 기록 중 화면 꺼짐 방지 (안 돼도 기록은 계속)
+  rec = { on: true, recording: false, t0: performance.now() / 1000, samples: [], plot: [], events: 0, who, label };
+  window.addEventListener("devicemotion", onMotion);
+  $("form").hidden = true; $("live").hidden = false; $("go").disabled = true;
+  $("lState").textContent = `${LABEL_KO[label]} · 휴대폰을 붙이고 출발 준비`; $("lState").className = "state";
+  let left = COUNTDOWN_S; $("lTime").textContent = left; draw();
+  timers.push(setInterval(() => {
+    if (!rec) return;
+    left--;
+    if (left > 0) { $("lTime").textContent = left; return; }
+    clearTimers();
+    if (rec.events === 0) { stopAll(); return showErr("센서 값이 들어오지 않아요. PC에는 동작 센서가 없어요 — 휴대폰으로 열어 주세요"); }
+    rec.recording = true; rec.t0 = performance.now() / 1000; rec.samples = []; rec.plot = [];
+    $("lState").textContent = `● 기록 중 — ${LABEL_KO[label]} 움직이세요`; $("lState").className = "state " + (label === "rough" ? "no" : "ok");
+    const start = Date.now();
+    timers.push(setInterval(() => {
+      if (!rec) return;
+      const s = RECORD_S - (Date.now() - start) / 1000;
+      $("lTime").textContent = Math.max(0, Math.ceil(s)); draw();
+      if (s <= 0) finish();
+    }, 100));
+  }, 1000));
+};
+$("stop").onclick = stopAll;
+
+async function finish() {
+  const r = rec; clearTimers(); window.removeEventListener("devicemotion", onMotion);
+  try { wake && wake.release(); } catch {} wake = null;
+  $("lState").textContent = "올리는 중…"; $("lTime").textContent = "✓";
+  try {
+    const hz = r.samples.length / RECORD_S;
+    const ua = (navigator.userAgent.match(/\(([^)]+)\)/) || [])[1] || "";
+    const d = await api("/api/sensor/upload", { participant: r.who, label: r.label, samples: r.samples, hz: Math.round(hz), device: ua.slice(0, 60), source: r.src });
+    rec = null; $("live").hidden = true; $("form").hidden = false; $("go").disabled = false;
+    showResult(d, r.label, hz);
+    renderStats(d.stats);
+    setLabel(r.label === "smooth" ? "rough" : "smooth"); // 다음은 반대 방식 (번갈아 기록)
+  } catch (e) { stopAll(); showErr(e.message); }
+}
+function showResult(d, lab, hz) {
+  const f = d.features, a = d.ai;
+  const box = $("result"); box.hidden = false;
+  box.innerHTML = `<h2>방금 기록 — ${LABEL_KO[lab]} · ${f.seconds.toFixed(1)}초 · 약 ${Math.round(hz)}Hz</h2>
+    ${a ? `<div class="verdict ${a.flagged ? "no" : "ok"}">${a.flagged ? "⚠ AI: 거친 운전 — 재교육 권고" : "✅ AI: 부드러운 운전"}</div>
+      <p class="sub" style="margin:0 0 6px">이상 점수 <b>${a.anomaly.toFixed(3)}</b> (기준 ${a.threshold.toFixed(3)}) · 실제로 고른 방식: ${LABEL_KO[lab]} → ${(a.flagged === (lab === "rough")) ? "맞힘" : "틀림"}${a.courses.length ? `<br>추천 교육: ${esc(a.courses.join(", "))}` : ""}</p>` : ""}
+    <div class="kv">
+      <span>급가속·급제동</span><span>${f.harsh_rate.toFixed(1)} 회/분</span>
+      <span>급회전</span><span>${f.sharp_turn_rate.toFixed(1)} 회/분</span>
+      <span>흔들림 상위 5%</span><span>${f.acc_p95.toFixed(2)} m/s²</span>
+      <span>회전 속도 상위 5%</span><span>${f.gyro_p95.toFixed(2)} rad/s</span>
+      <span>가가속도 RMS</span><span>${f.jerk_rms.toFixed(1)} m/s³</span>
+    </div>
+    <button class="btn ghost" id="undo">잘못 기록했어요 — 방금 기록 빼기</button>`;
+  $("undo").onclick = async () => {
+    try { const r = await api("/api/sensor/undo", {}); renderStats(r.stats); box.innerHTML = '<p class="sub" style="margin:0">방금 기록을 분석에서 뺐어요.</p>'; }
+    catch (e) { box.insertAdjacentHTML("beforeend", `<p class="err">${esc(e.message)}</p>`); }
+  };
+}
+
+(async () => {
+  if (!ME || !ME.key || !ME.token) { $("need").hidden = false; return; }
+  $("app").hidden = false;
+  $("who").value = pref.get("who") || ME.name || ""; setLabel(label);
+  try { renderStats(await api("/api/sensor/stats", {})); }
+  catch (e) { $("stats").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+})();
+</script>
+</body>
+</html>

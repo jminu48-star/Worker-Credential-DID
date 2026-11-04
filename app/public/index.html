@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkerBadge 관제</title>
+<style>
+/* 레이아웃: 상단 바 + 작업자 띠 + 3열(발급기관 / 장비 단말 / 기록). 좁은 화면에서는 1열 */
+:root{
+  --bg:#F3F4F6; --panel:#FFFFFF; --ink:#1B222C; --muted:#5F6B7A; --line:#DDE1E7;
+  --amber:#F2A900; --amber-ink:#3A2A00; --steel:#1F6F8B;
+  --ok:#1E7B4C; --ok-bg:#E3F4EA; --no:#B8382C; --no-bg:#FBE8E6; --off:#8A93A0; --off-bg:#EEF0F3;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --sans:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#12161C; --panel:#1A2029; --ink:#E6E9EE; --muted:#9AA4B2; --line:#2C3440;
+  --amber:#F2B624; --amber-ink:#2A1F00; --steel:#6FB3CC;
+  --ok:#6FD39E; --ok-bg:#16301F; --no:#F08A7E; --no-bg:#3A1C19; --off:#7D8695; --off-bg:#232A34; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans)}
+button,select,input{font:inherit;color:inherit}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:#1B222C;color:#fff}
+header h1{font-size:17px;margin:0;display:flex;align-items:center;gap:10px}
+header h1 .logo{width:28px;height:28px;border-radius:50%;background:var(--amber);display:grid;place-items:center;color:#1B222C;font-weight:800}
+.clock{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
+.clock b{font-family:var(--mono);font-weight:500}
+.hbtn{border:1px solid #445064;background:#263040;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
+.hbtn:hover{border-color:var(--amber)}
+main{padding:16px 20px 32px;max-width:1500px;margin:0 auto}
+.workers{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:14px}
+.wcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.wcard .top{display:flex;justify-content:space-between;align-items:baseline}
+.wcard .nm{font-weight:700;font-size:15px}
+.addr{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.chip{font-size:11.5px;padding:1px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.chip.ok{background:var(--ok-bg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.chip.no{background:var(--no-bg);color:var(--no)}
+.chip.off{background:var(--off-bg);color:var(--off);text-decoration:line-through}
+.chip.none{color:var(--muted);border-color:var(--line)}
+.grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1.1fr) minmax(0,.85fr);gap:14px;align-items:start}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+.panel h2{font-size:15px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+.panel .sub{color:var(--muted);font-size:12.5px;margin:0 0 12px}
+.tag{font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;background:var(--amber);color:var(--amber-ink)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+select,input{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:6px 8px;min-width:0}
+.btn{border:0;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;background:var(--amber);color:var(--amber-ink)}
+.btn:hover{filter:brightness(1.05)} .btn:disabled{opacity:.5;cursor:wait}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:500}
+.btn.ghost:hover{border-color:var(--amber)}
+.btn.danger{background:var(--no-bg);color:var(--no)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.btn:focus-visible,select:focus-visible,input:focus-visible,.eq:focus-visible,.hbtn:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:500}
+td.num{font-family:var(--mono)}
+.status{font-weight:700;font-size:12px}
+.status.ok{color:var(--ok)} .status.no{color:var(--no)} .status.off{color:var(--off)}
+.eqs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.eq{border:2px solid var(--line);border-radius:10px;padding:10px;background:var(--bg);cursor:pointer;text-align:left}
+.eq[aria-pressed="true"]{border-color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,var(--panel))}
+.eq .i{font-size:22px} .eq .n{font-weight:700;font-size:13px} .eq .d{font-size:11px;color:var(--muted)}
+.big{width:100%;padding:12px;font-size:15px;margin:4px 0 12px}
+.result{border-radius:12px;padding:14px;border:1px solid var(--line);min-height:120px}
+.result.ok{background:var(--ok-bg);border-color:var(--ok)}
+.result.no{background:var(--no-bg);border-color:var(--no)}
+.verdict{font-size:22px;font-weight:800;display:flex;align-items:center;gap:10px}
+.verdict.ok{color:var(--ok)} .verdict.no{color:var(--no)}
+.steps{list-style:none;padding:0;margin:10px 0 0;display:flex;flex-direction:column;gap:5px}
+.steps li{display:grid;grid-template-columns:22px 1fr;gap:6px;font-size:12.5px}
+.steps .k{width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-size:11px;font-weight:700}
+.steps code{font-family:var(--mono);font-size:11.5px;word-break:break-all}
+.req{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.empty{color:var(--muted);font-size:13px}
+.attack{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+.attack h3{font-size:13.5px;margin:0 0 8px}
+.log{list-style:none;margin:0;padding:0;max-height:640px;overflow:auto}
+.log li{padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;display:grid;grid-template-columns:8px 1fr;gap:8px}
+.log .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--off)}
+.log .allow .dot{background:var(--ok)} .log .deny .dot{background:var(--no)} .log .issue .dot,.log .renew .dot{background:var(--steel)} .log .revoke .dot{background:var(--amber)}
+.log .meta{color:var(--muted);font-size:11px;font-family:var(--mono)}
+.vcgrid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;margin-top:4px}
+@media (max-width:900px){.vcgrid{grid-template-columns:1fr}}
+.vcbox{width:100%;min-height:340px;resize:vertical;font:12px/1.45 var(--mono);background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px}
+.vcbox:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 12px}
+.split div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;background:var(--bg)}
+.split b{display:block;font-size:12.5px;margin-bottom:2px}
+.hash{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all}
+.vsteps{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.vsteps li{display:grid;grid-template-columns:22px 1fr;gap:8px;font-size:12.5px;align-items:start}
+.vsteps .m{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff;background:var(--ok)}
+.vsteps .no .m{background:var(--no)} .vsteps .d{color:var(--muted);font-size:12px}
+.log .ai .dot{background:#8A5A00}
+.aigrid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;margin-top:4px}
+@media (max-width:900px){.aigrid{grid-template-columns:1fr}}
+.trace{width:100%;height:auto;display:block;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:var(--muted);margin:6px 0 10px}
+.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:4px;border-radius:2px}
+.meter{position:relative;height:14px;border-radius:7px;background:var(--off-bg);margin:8px 0 4px;overflow:visible}
+.meter .fill{height:100%;border-radius:7px;background:var(--ok)}
+.meter.no .fill{background:var(--no)}
+.meter .mark{position:absolute;top:-4px;width:2px;height:22px;background:var(--ink)}
+.meter-l{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.why{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:5px}
+.why li{font-size:12.5px;display:grid;grid-template-columns:54px 1fr;gap:8px}
+.why .zz{font-family:var(--mono);font-weight:700;color:var(--no)}
+.course{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--amber) 22%,var(--panel));margin:2px 4px 2px 0}
+.rev{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg)}
+.rev .top{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:13px}
+.rev .st{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.st.pending{background:var(--no-bg);color:var(--no)} .st.suspended{background:var(--off-bg);color:var(--ink)}
+.st.retrained,.st.ok{background:var(--ok-bg);color:var(--ok)} .st.dismissed{background:var(--off-bg);color:var(--muted)}
+.rev .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+body[data-view="admin"] .demo-only{display:none!important}
+body[data-view="admin"] .grid{grid-template-columns:minmax(0,1.25fr) minmax(0,.75fr)}
+@media (max-width:1100px){body[data-view="admin"] .grid{grid-template-columns:1fr}}
+.nav{display:flex;flex-wrap:wrap;gap:6px}
+.nav a{color:#fff;text-decoration:none;font-size:12.5px;border:1px solid #445064;border-radius:6px;padding:3px 9px}
+.nav a[aria-current="page"]{background:var(--amber);color:#1B222C;border-color:var(--amber)}
+.nav a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.connect{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
+@media (max-width:900px){.connect{grid-template-columns:1fr}}
+.eqcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.eqc{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
+.eqc a{color:var(--steel);font-size:12.5px}
+.phone{display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
+.phone .q{background:#fff;border-radius:8px;padding:6px}
+.phone .q svg{width:100%;height:auto;display:block}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#1B222C;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+.toast.show{opacity:1}
+.toast.err{background:var(--no)}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo">W</span> <span id="appTitle">WorkerBadge 관제</span> <span id="appSub" style="font-weight:400;font-size:12px;color:#AAB4C3">시연용 통합 화면 — 모든 역할을 한곳에</span></h1>
+  <nav class="nav" aria-label="화면 이동"><a href="/" id="navAll">통합 화면</a><a href="/admin" id="navAdmin">관리자</a><a href="/equipment" target="_blank">장비 화면</a><a href="/worker" target="_blank">작업자 앱</a></nav>
+  <div class="clock">
+    가상 블록체인 시각 <b id="chainDate">-</b>
+    <button class="hbtn" data-days="1">+1일</button>
+    <button class="hbtn" data-days="7">+7일</button>
+    <button class="hbtn" data-days="30">+30일</button>
+    <button class="hbtn" id="reset">처음 상태로</button>
+  </div>
+</header>
+
+<main>
+  <section class="workers" id="workers" aria-label="작업자 현황"></section>
+
+  <div class="grid">
+    <!-- 발급기관 -->
+    <section class="panel" aria-labelledby="h-issuer">
+      <h2 id="h-issuer"><span class="tag">발급기관</span> 배지 발급·관리</h2>
+      <p class="sub">자격 기관·사내 안전팀 역할. 발급·정지·연장은 이 계정만 할 수 있어요.</p>
+      <div class="row">
+        <label class="f">작업자<select id="iWorker"></select></label>
+        <label class="f">배지 종류<select id="iType"></select></label>
+        <label class="f">유효 기간(일)<input id="iDays" type="number" min="1" value="365" style="width:90px"></label>
+        <button class="btn" id="iBtn">발급</button>
+      </div>
+      <div class="tbl"><table>
+        <thead><tr><th>#</th><th>작업자</th><th>종류</th><th>상태</th><th>남은 기간</th><th></th></tr></thead>
+        <tbody id="badges"></tbody>
+      </table></div>
+    </section>
+
+    <!-- 장비 단말 -->
+    <section class="panel demo-only" aria-labelledby="h-eq">
+      <h2 id="h-eq"><span class="tag">장비 단말</span> 시동 전 자격 확인</h2>
+      <p class="sub">작업자가 장비에 태그하면 일회용 암호 → 지갑 서명 → 체인 조회 순서로 확인해요.</p>
+      <div class="eqs" id="eqs" role="group" aria-label="장비 선택"></div>
+      <div class="row">
+        <label class="f" style="flex:1">태그하는 작업자<select id="aWorker"></select></label>
+      </div>
+      <button class="btn big" id="aBtn">태그하고 시동 걸기</button>
+      <div class="result" id="result"><p class="empty">장비와 작업자를 고르고 시동을 걸어 보세요.</p></div>
+
+      <div class="attack">
+        <h3>공격 시뮬레이션 — 막히는지 확인</h3>
+        <div class="row">
+          <label class="f">이름을 대는 사람<select id="kClaim"></select></label>
+          <label class="f">실제 서명하는 사람<select id="kSigner"></select></label>
+          <button class="btn ghost" id="kBtn">남의 이름으로 시도</button>
+        </div>
+        <div class="row">
+          <button class="btn ghost" id="rBtn">지난 서명 재사용(녹화 공격)</button>
+        </div>
+        <div class="row">
+          <label class="f">배지<select id="tBadge"></select></label>
+          <label class="f">받을 사람<select id="tTo"></select></label>
+          <button class="btn ghost" id="tBtn">배지 넘기기 시도</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 기록 -->
+    <section class="panel" aria-labelledby="h-log">
+      <h2 id="h-log"><span class="tag">기록</span> 블록체인 이벤트·접근 로그</h2>
+      <p class="sub">발급·정지·연장은 트랜잭션(가스 사용), 자격 조회는 view 호출(가스 0)이에요. 기록은 <b>data</b> 폴더에 자동 저장돼서 창을 닫았다 켜도 이어져요.</p>
+      <ul class="log" id="log"></ul>
+      <p class="addr" id="contract" style="margin-top:10px"></p>
+    </section>
+  </div>
+
+  <!-- 장비·휴대폰 연결 -->
+  <section class="panel" aria-labelledby="h-conn" style="margin-top:14px">
+    <h2 id="h-conn"><span class="tag">현장</span> 장비 현황 · 휴대폰 연결</h2>
+    <p class="sub">장비 화면의 바뀌는 QR을 작업자가 휴대폰으로 찍고 서명하면, 장비가 체인을 조회해 바로 시동 여부를 정해요. 관리자는 결과만 확인해요.</p>
+    <div id="regs"></div>
+    <div class="connect">
+      <div class="eqcards" id="eqcards"></div>
+      <div class="phone"><div class="q" id="phoneQR" role="img" aria-label="작업자 앱 주소 QR"></div>
+        <div><b style="font-size:13.5px">휴대폰으로 작업자 앱 열기</b> <span class="chip none" id="netChip"></span><div class="addr" id="phoneUrl" style="margin:4px 0"></div>
+        <div style="margin:6px 0;font-size:12.5px">휴대폰 연결 코드 <b id="pairCode" style="font:800 20px var(--mono);letter-spacing:3px;color:var(--steel)">------</b> <span class="addr">(한 번 쓰면 바뀜 · 10분마다 바뀜)</span></div>
+        <div style="font-size:12px;color:var(--muted)" id="phoneTip"></div>
+        <div class="row" style="margin:8px 0 0"><label class="f" style="flex:1">PC 주소 직접 입력 (자동 주소가 틀릴 때)<input id="baseIn" placeholder="예: http://192.168.0.12:3000"></label><button class="btn sm ghost" id="baseBtn">적용</button></div></div></div>
+    </div>
+  </section>
+
+  <!-- 운용 -->
+  <section class="panel" aria-labelledby="h-use" style="margin-top:14px">
+    <h2 id="h-use"><span class="tag">운용</span> 누가 · 어떤 장비를 · 언제부터 · 얼마나</h2>
+    <p class="sub">휴대폰 QR 인증으로 시작해서 <b>작업 종료</b>(휴대폰)나 <b>작업자 이탈</b>(장비의 좌석 센서)로 끝나요. 끝나면 그 작업 기록을 AI가 자동으로 분석해요. 기록은 <b>data/usage.csv</b>, 모든 인증 시도는 <b>data/access.csv</b>에도 저장돼요.</p>
+    <div id="useActive"></div>
+    <div class="tbl"><table>
+      <thead><tr><th>작업자</th><th>장비</th><th>시작</th><th>운용 시간</th><th>종료</th><th>AI</th></tr></thead>
+      <tbody id="useHist"></tbody>
+    </table></div>
+  </section>
+
+  <!-- AI -->
+  <section class="panel" aria-labelledby="h-ai" style="margin-top:14px">
+    <h2 id="h-ai"><span class="tag">AI</span> 숙련도 모니터링 → 재교육 (3단계)</h2>
+    <p class="sub">장비 센서 기록(속도·회전·포크 높이)을 AI가 분석해서, 평소 숙련자와 크게 다르면 재교육을 권고해요. AI는 권고만 하고, 배지 정지는 발급기관이 확인한 뒤 결정해요.</p>
+    <div class="aigrid">
+      <div>
+        <div class="row">
+          <label class="f">작업자<select id="mWorker"></select></label>
+          <label class="f">이번 작업을 어떻게 운전했나 (시뮬레이션 입력 — AI는 이 값을 못 봐요)<select id="mStyle">
+            <option value="skilled">숙련자처럼 — 부드럽게, 회전 전 감속</option>
+            <option value="novice">미숙하게 — 머뭇거림, 조향 흔들림</option>
+            <option value="risky">위험하게 — 과속, 급조작, 고속 회전</option>
+          </select></label>
+          <button class="btn" id="mBtn">작업 기록 분석</button>
+        </div>
+        <div id="mTrace"><p class="empty">작업자와 운전 방식을 고르고 분석해 보세요. 시험용 작업자(학습에 쓰지 않은 사람)의 3분짜리 기록을 하나 가져와 분석해요.</p></div>
+        <div class="result" id="mResult" style="min-height:0"><p class="empty">분석 결과가 여기에 나와요.</p></div>
+      </div>
+      <div>
+        <h3 style="font-size:13.5px;margin:0 0 8px">재교육 권고 — 발급기관 확인</h3>
+        <div id="mList"><p class="empty">아직 권고가 없어요.</p></div>
+        <p class="addr" id="mNote" style="margin-top:8px"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- VC -->
+  <section class="panel" aria-labelledby="h-vc" style="margin-top:14px">
+    <h2 id="h-vc"><span class="tag">VC</span> 작업자가 가진 자격증명서 확인 (2단계)</h2>
+    <p class="sub">배지를 발급할 때 발급기관이 서명한 증명서(VC)도 함께 작업자에게 줘요. 다른 회사·감독관에게 자격을 보여 줄 때 이 파일을 내면, 받는 쪽이 서명과 체인 기록을 대조해서 진짜인지 확인해요.</p>
+    <div class="split">
+      <div><b>⛓ 블록체인에 있는 것</b>유효 여부(정지·만료)와 VC의 지문(해시)만. 누구나 볼 수 있어서 이름은 안 올려요.</div>
+      <div><b>📄 VC 파일에 있는 것</b>이름·자격번호·발급기관 같은 내용 + 발급기관 서명. 작업자만 갖고 있어요.</div>
+    </div>
+    <div class="vcgrid">
+      <div>
+        <div class="row">
+          <label class="f" style="flex:1">배지 고르기<select id="vBadge"></select></label>
+          <button class="btn ghost" id="vLoad">VC 불러오기</button>
+          <button class="btn ghost" id="vSave">파일로 저장</button>
+        </div>
+        <label class="f">VC 원문 (직접 고쳐서 검증해 봐도 돼요)<textarea id="vText" class="vcbox" spellcheck="false" placeholder="배지를 고르고 'VC 불러오기'를 누르세요."></textarea></label>
+        <p class="hash" id="vHash"></p>
+      </div>
+      <div>
+        <div class="row">
+          <button class="btn" id="vCheck">이 VC 검증하기</button>
+          <label class="btn ghost" style="font-weight:500;cursor:pointer">VC 파일 열기<input type="file" id="vFile" accept=".json,application/json" hidden></label>
+        </div>
+        <div class="attack demo-only" style="margin-top:4px">
+          <h3>위조 시뮬레이션 — 고른 배지의 VC로 시도</h3>
+          <div class="row">
+            <button class="btn ghost" data-forge="name">이름 바꿔치기</button>
+            <button class="btn ghost" data-forge="expiry">만료일 10년 늘리기</button>
+            <button class="btn ghost" data-forge="issuer">가짜 발급기관이 서명</button>
+          </div>
+        </div>
+        <div class="result" id="vResult"><p class="empty">VC를 불러온 뒤 검증해 보세요. 6단계를 모두 통과해야 진짜예요.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="conn" hidden style="position:fixed;top:0;left:0;right:0;z-index:9;background:#B8382C;color:#fff;padding:10px 20px;font-weight:700;text-align:center">⚠ 프로그램 서버와 연결이 끊겼어요 — start.bat 검은 창을 닫지 말고 켜 두세요. 다시 실행한 뒤 이 페이지를 새로고침하세요.</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/vendor/qrcode.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const VIEW = location.pathname.replace(/\/$/, "") === "/admin" ? "admin" : "all";
+document.body.dataset.view = VIEW;
+if (VIEW === "admin") { $("appTitle").textContent = "WorkerBadge 관리자"; $("appSub").textContent = "발급기관 — 발급·정지, AI 권고 확인, 장비 기록"; document.title = "WorkerBadge 관리자"; }
+$(VIEW === "admin" ? "navAdmin" : "navAll").setAttribute("aria-current", "page");
+let phoneDrawn = "";
+const ICON = { FORKLIFT: "🚜", CRANE: "🏗️", HAZMAT: "☣️" };
+let ST = null, selectedEq = "FL-001";
+
+const SERVER_MSG = "프로그램 서버에 연결할 수 없어요. start.bat 검은 창이 켜져 있는지, 주소창이 http://localhost:3000 인지 확인하세요.";
+async function api(path, body) {
+  if (location.protocol === "file:") throw new Error("index.html 을 직접 열면 동작하지 않아요. start.bat 을 더블클릭해서 실행하세요.");
+  let r;
+  try { r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}); }
+  catch { setConn(false); throw new Error(SERVER_MSG); }
+  setConn(true);
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error);
+  return j.data;
+}
+function setConn(ok) {
+  const b = $("conn"); if (!b) return;
+  b.hidden = ok;
+}
+function toast(msg, err) {
+  const t = $("toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), 2600);
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const opt = (v, t, sel) => `<option value="${esc(v)}"${sel ? " selected" : ""}>${esc(t)}</option>`;
+function keepSel(el, html) { const v = el.value; el.innerHTML = html; if ([...el.options].some((o) => o.value === v)) el.value = v; }
+
+async function refresh() {
+  ST = await api("/api/state");
+  $("chainDate").textContent = ST.chainDate;
+  $("contract").textContent = "컨트랙트 " + ST.contract;
+
+  // 작업자 띠
+  $("workers").innerHTML = ST.workers.map((w) => {
+    const mine = ST.badges.filter((b) => b.workerKey === w.key && b.current);
+    const chips = ST.types.map((tn, ti) => {
+      const b = mine.find((x) => x.type === ti);
+      if (!b) return "";
+      const cls = b.valid ? "ok" : b.revoked ? "no" : "off";
+      const why = b.valid ? `${b.daysLeft}일 남음` : b.revoked ? "정지" : "만료";
+      return `<span class="chip ${cls}" title="${esc(tn)} · ${why}">${esc(tn)}</span>`;
+    }).join("") || `<span class="chip none">배지 없음</span>`;
+    return `<div class="wcard"><div class="top"><span class="nm">${esc(w.name)}${w.phone ? ' <span title="휴대폰 지갑 — 개인 키는 휴대폰에만 있어요" style="font-size:12px">📱</span>' : ""}${w.phone && w.face ? ' <span title="얼굴 등록 승인됨 — 얼굴 정보는 휴대폰에만 있어요" style="font-size:12px">😀</span>' : ""}</span><span class="addr">${w.address.slice(0, 6)}…${w.address.slice(-4)}</span></div><div class="chips">${chips}</div></div>`;
+  }).join("");
+
+  // 선택 상자
+  const wOpts = ST.workers.map((w) => opt(w.key, w.name)).join("");
+  keepSel($("iWorker"), wOpts); keepSel($("aWorker"), wOpts); keepSel($("kClaim"), wOpts); keepSel($("tTo"), wOpts);
+  keepSel($("kSigner"), ST.workers.map((w, i) => opt(w.key, w.name, i === 1)).join(""));
+  keepSel($("iType"), ST.types.map((t, i) => opt(i, t)).join(""));
+  keepSel($("mWorker"), wOpts);
+  keepSel($("vBadge"), ST.badges.filter((b) => b.hasVc).map((b) => opt(b.tokenId, `#${b.tokenId} ${b.worker} · ${b.typeName}${b.current ? "" : " (예전 배지)"}`)).join(""));
+  keepSel($("tBadge"), ST.badges.map((b) => opt(`${b.tokenId}|${b.workerKey}`, `#${b.tokenId} ${b.worker} · ${b.typeName}`)).join(""));
+
+  // 배지 표
+  $("badges").innerHTML = ST.badges.map((b) => {
+    const [cls, txt] = b.revoked ? ["no", "정지"] : b.expired ? ["off", "만료"] : ["ok", "유효"];
+    const left = b.revoked ? "-" : b.expired ? "만료됨" : `${b.daysLeft}일`;
+    const actions = b.revoked ? "" :
+      `<button class="btn sm ghost" data-vc="${b.tokenId}">VC</button> <button class="btn sm ghost" data-renew="${b.tokenId}">+365일</button> <button class="btn sm danger" data-revoke="${b.tokenId}">정지</button>`;
+    return `<tr${b.current ? "" : ' style="opacity:.55"'}><td class="num">${b.tokenId}</td><td>${esc(b.worker)}</td><td>${esc(b.typeName)}</td><td><span class="status ${cls}">${txt}</span></td><td>${left}</td><td>${actions}</td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="empty">발급된 배지가 없어요.</td></tr>`;
+
+  // 장비
+  $("eqs").innerHTML = ST.equipment.map((e) =>
+    `<button type="button" class="eq" data-eq="${e.id}" aria-pressed="${e.id === selectedEq}"><div class="i">${ICON[e.type] || "⚙️"}</div><div class="n">${esc(e.name)}</div><div class="d">${e.id}</div></button>`).join("");
+
+  renderAI();
+  renderConnect();
+  renderUsage();
+
+  // 로그
+  $("log").innerHTML = ST.events.map((ev) =>
+    `<li class="${ev.kind}"><span class="dot"></span><div>${esc(ev.text)}<div class="meta">${new Date(ev.at).toLocaleTimeString("ko-KR")}${ev.gas ? ` · ${ev.gas.toLocaleString()} gas` : ""}</div></div></li>`).join("");
+}
+
+function showResult(r, title) {
+  const cls = r.allowed ? "ok" : "no";
+  const s = r.steps || {};
+  const checks = (r.checks || []).map((c) => `<span class="chip ${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✗"} ${esc(c.typeName)}</span>`).join("");
+  $("result").className = "result " + cls;
+  $("result").innerHTML = `
+    <div class="verdict ${cls}">${r.allowed ? "✅ 시동 허용" : "❌ 시동 거부"}</div>
+    <div style="font-size:13px;margin-top:2px">${esc(title)} — ${esc(r.reason)}</div>
+    <ol class="steps">
+      ${s.nonce ? `<li><span class="k">1</span><div>장비가 일회용 암호 발급 <code>${esc(s.nonce)}</code></div></li>` : ""}
+      ${s.signature ? `<li><span class="k">2</span><div>작업자 지갑이 서명 <code>${esc(s.signature)}</code></div></li>` : ""}
+      ${s.recovered ? `<li><span class="k">3</span><div>서명에서 주소 복원 → <b>${esc(s.recoveredName)}</b> <code>${esc(s.recovered.slice(0, 10))}…</code></div></li>` : ""}
+      ${checks ? `<li><span class="k">4</span><div>체인 조회 (가스 0${s.lookupMs !== undefined ? `, ${s.lookupMs.toFixed(1)}ms` : ""})<div class="req">${checks}</div></div></li>` : ""}
+    </ol>`;
+}
+
+// ── AI 패널 ──
+const ST_KO = { pending: "확인 필요", suspended: "정지됨 · 재교육 중", retrained: "재발급 완료", dismissed: "오판 처리", ok: "정상" };
+function traceSVG(tr) {
+  const W = 600, H = 150, pad = 4, n = tr.v.length;
+  const X = (i) => pad + (i / (n - 1)) * (W - 2 * pad);
+  const vmax = 3.5, amax = 3;
+  const Yv = (v) => H - pad - (Math.min(Math.abs(v), vmax) / vmax) * (H - 2 * pad);
+  const Ya = (a) => H - pad - (Math.min(Math.abs(a), amax) / amax) * (H - 2 * pad);
+  const line = (arr, Y) => arr.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  let bands = "", start = -1;
+  tr.h.forEach((h, i) => { const up = h > 0.5 && Math.abs(tr.v[i]) > 0.3; if (up && start < 0) start = i; if ((!up || i === n - 1) && start >= 0) { bands += `<rect x="${X(start)}" y="0" width="${Math.max(2, X(i) - X(start))}" height="${H}" fill="var(--amber)" opacity=".28"/>`; start = -1; } });
+  return `<svg class="trace" viewBox="0 0 ${W} ${H}" role="img" aria-label="3분 작업 기록: 속도와 좌우 가속도">${bands}
+    <line x1="0" x2="${W}" y1="${Ya(1.5)}" y2="${Ya(1.5)}" stroke="var(--no)" stroke-dasharray="4 4" stroke-width="1"/>
+    <polyline points="${line(tr.v, Yv)}" fill="none" stroke="var(--steel)" stroke-width="1.6"/>
+    <polyline points="${line(tr.ay, Ya)}" fill="none" stroke="var(--no)" stroke-width="1.1" opacity=".8"/></svg>
+    <div class="legend"><span><i style="background:var(--steel)"></i>속도 (0~3.5 m/s)</span><span><i style="background:var(--no)"></i>좌우 가속도 (점선 = 고속 회전 기준 1.5 m/s²)</span><span><i style="background:var(--amber);height:10px;opacity:.5"></i>포크를 올린 채 주행</span><span>가로축 = 3분</span></div>`;
+}
+function showAI(d) {
+  const r = d.review, cls = r.flagged ? "no" : "ok";
+  $("mTrace").innerHTML = traceSVG(d.trace);
+  const lo = 0.3, hi = 0.85, pos = (x) => Math.max(0, Math.min(100, ((x - lo) / (hi - lo)) * 100));
+  const P = (c) => Math.round((r.proba[c] || 0) * 100);
+  $("mResult").className = "result " + cls;
+  $("mResult").innerHTML = `
+    <div class="verdict ${cls}">${r.flagged ? "⚠ 재교육 권고" : "✅ 정상 범위"}</div>
+    <div style="font-size:13px;margin-top:2px">${esc(r.workerName)} · 이상 점수 <b>${r.anomaly.toFixed(3)}</b> (기준 ${r.threshold.toFixed(3)})</div>
+    <div class="meter ${cls}" aria-hidden="true"><div class="fill" style="width:${pos(r.anomaly)}%"></div><div class="mark" style="left:${pos(r.threshold)}%"></div></div>
+    <div class="meter-l"><span>숙련자와 비슷</span><span>기준선 ▲</span><span>숙련자와 다름</span></div>
+    <div style="font-size:12.5px;margin-top:8px">유형 추정: <b>${esc(r.typeKo)}</b> <span class="addr">(숙련 ${P("skilled")}% · 미숙 ${P("novice")}% · 위험 습관 ${P("risky")}%)</span></div>
+    ${r.recommendations.length ? `<ul class="why">${r.recommendations.slice(0, 4).map((x) => `<li><span class="zz">z ${x.z}</span><span>${esc(x.label)}</span></li>`).join("")}</ul>
+      <div style="margin-top:8px;font-size:12.5px">추천 교육: ${r.courses.map((c) => `<span class="course">${esc(c)}</span>`).join("")}</div>`
+      : `<p class="empty" style="margin-top:8px">숙련자보다 크게 벗어난 행동이 없어요.</p>`}
+    ${r.flagged ? `<p style="font-size:12.5px;margin:10px 0 0">→ 오른쪽 목록에서 발급기관이 확인하고 결정해요.</p>` : ""}`;
+}
+function renderRegs() {
+  const list = ST.registrations || [];
+  const FACE_NOTE = "얼굴 사진·특징값은 휴대폰에만 있고 여기로 오지 않아요 (개인정보보호법상 민감정보 — 서버·블록체인에 저장 안 함).";
+  $("regs").innerHTML = list.length ? `<h3 style="font-size:13.5px;margin:0 0 6px">📱 작업자 등록 요청 — 본인 확인 후 승인</h3>` + list.map((r) => {
+    const top = `<div class="top"><span><b>${esc(r.name)}</b> · <span class="addr">${r.address}</span></span><span class="st pending">${esc(r.via)} · ${new Date(r.at).toLocaleTimeString("ko-KR")}</span></div>`;
+    if (r.kind === "face") return `<div class="rev" style="margin-bottom:8px">${top}
+      <div style="font-size:12.5px;margin-top:4px">😀 <b>${r.firstFace ? "얼굴 등록 승인 요청" : "⚠ 얼굴을 새로 등록함"}</b> — ${r.firstFace ? "이 휴대폰에 얼굴을 처음 등록했어요." : "이미 승인된 얼굴이 있는데 다시 등록했어요. 다른 사람이 휴대폰을 빌려 자기 얼굴로 바꾼 것일 수 있어요."} 작업자 본인이 맞는지 직접 확인한 뒤 승인하세요.</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">${FACE_NOTE}</div>
+      <div class="acts"><button class="btn sm" data-reg="face" data-id="${r.id}">본인 확인함 — 얼굴 등록 승인</button>
+        <button class="btn sm danger" data-reg="reject" data-id="${r.id}">거절</button></div></div>`;
+    const match = r.match && ST.workers.find((w) => w.key === r.match);
+    return `<div class="rev" style="margin-bottom:8px">${top}
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">휴대폰이 이 주소의 개인 키로 서명해서 보낸 요청이에요 (주소의 주인만 보낼 수 있음). 신분증·자격증 원본을 확인한 뒤 승인하세요.</div>
+      <div style="font-size:12.5px;margin-top:4px">${r.face ? `<span class="chip ok">😀 휴대폰에 얼굴 등록됨</span> <span style="font-size:12px;color:var(--muted)">${FACE_NOTE}</span>` : `<span class="chip no">얼굴 미등록</span>`}</div>
+      <div class="acts">${match ? `<button class="btn sm" data-reg="link" data-id="${r.id}" data-worker="${match.key}">기존 '${esc(match.name)}'의 휴대폰으로 연결 (배지 재발급)</button>` : ""}
+        <button class="btn sm ${match ? "ghost" : ""}" data-reg="new" data-id="${r.id}">새 작업자로 등록</button>
+        <button class="btn sm danger" data-reg="reject" data-id="${r.id}">거절</button></div></div>`;
+  }).join("") : "";
+}
+function renderConnect() {
+  renderRegs();
+  if (ST.pair) $("pairCode").textContent = ST.pair.code;
+  $("netChip").className = "chip " + (ST.internet ? "ok" : "none");
+  $("netChip").textContent = ST.internet ? "🌐 인터넷 주소 — 휴대폰 데이터 가능" : "📶 같은 와이파이 전용";
+  $("eqcards").innerHTML = ST.equipment.map((e) => {
+    const l = ST.eqLast && ST.eqLast[e.id];
+    const st = l ? `<span class="chip ${l.allowed ? "ok" : "no"}">${l.allowed ? "시동 허용" : "시동 거부"}</span> <span class="addr">${esc(l.workerName)} · ${new Date(l.at).toLocaleTimeString("ko-KR")}</span>` : `<span class="chip none">휴대폰 인증 기록 없음</span>`;
+    return `<div class="eqc"><b>${ICON[e.type] || ""} ${esc(e.name)}</b> <span class="addr">${e.id}</span><div style="margin:6px 0">${st}</div><a href="/equipment?eq=${e.id}" target="_blank">장비 화면 열기 ↗</a></div>`;
+  }).join("");
+  const url = (ST.phoneBase || location.origin) + "/worker";
+  if (phoneDrawn !== url && window.qrcode) {
+    const q = qrcode(0, "M"); q.addData(url); q.make();
+    $("phoneQR").innerHTML = q.createSvgTag({ cellSize: 4, margin: 1, scalable: true });
+    $("phoneUrl").textContent = url; phoneDrawn = url;
+  }
+  const others = (ST.lanOthers || []).map((c) => `<button class="btn sm ghost" data-base="${esc(c.base)}" style="margin:2px 4px 0 0">${esc(c.base)} <span class="addr">${esc(c.name)}</span></button>`).join("");
+  $("phoneTip").innerHTML = ST.internet
+    ? `휴대폰 <b>데이터(LTE·5G)</b>로도 열려요 — 같은 와이파이가 필요 없어요. 이 QR을 찍고, 위 연결 코드를 넣으세요.`
+    : !ST.lan
+    ? `<b style="color:var(--no)">⚠ 이 PC의 와이파이 주소를 못 찾았어요.</b> PC를 와이파이나 휴대폰 핫스팟에 연결한 뒤 새로고침하세요. cmd 에서 <code>ipconfig</code> 의 "IPv4 주소"를 아래에 직접 넣어도 돼요.${others ? "<br>후보: " + others : ""}`
+    : `휴대폰을 PC와 같은 와이파이에 연결하고 이 QR을 찍으세요.${ST.manualBase ? " (직접 입력한 주소 사용 중)" : ""}${others ? "<br>안 열리면 다른 후보로 바꿔 보세요: " + others : ""}`;
+}
+const BY_KO = { phone: "휴대폰", equipment: "장비 화면", seat: "작업자 이탈", admin: "관리자" };
+const mmss = (sec) => `${Math.floor(sec / 60)}분 ${String(sec % 60).padStart(2, "0")}초`;
+function renderUsage() {
+  const act = ST.sessions || [];
+  $("useActive").innerHTML = act.length ? act.map((x) => `<div class="rev" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span><span class="chip ok">사용 중</span> <b>${esc(x.workerName)}</b> · ${esc(x.equipment)} · ${new Date(x.startedAt).toLocaleTimeString("ko-KR")}부터 (${mmss(Math.floor((Date.now() - x.startedAt) / 1000))})</span>
+      <button class="btn sm ghost" data-endeq="${x.eq}">관리자 종료</button></div>`).join("") : '<p class="empty" style="margin-bottom:8px">지금 사용 중인 장비가 없어요.</p>';
+  $("useHist").innerHTML = (ST.usage || []).slice(0, 12).map((u) => `<tr><td>${esc(u.workerName)}</td><td>${esc(u.equipment)}</td>
+      <td class="num">${new Date(u.startedAt).toLocaleTimeString("ko-KR")}</td><td>${mmss(u.durationSec)}</td><td>${BY_KO[u.endedBy] || u.endedBy}</td>
+      <td>${u.aiReviewId ? `<span class="status ${u.aiFlagged ? "no" : "ok"}">#${u.aiReviewId} ${u.aiFlagged ? "재교육 권고" : "정상"}</span>` : "-"}</td></tr>`).join("")
+    || '<tr><td colspan="6" class="empty">아직 끝난 운용이 없어요.</td></tr>';
+}
+function renderAI() {
+  const A = ST && ST.ai;
+  if (!A || !A.enabled) { $("mList").innerHTML = '<p class="empty">AI 모델 파일(ai/model.json)이 없어서 꺼져 있어요.</p>'; return; }
+  $("mNote").textContent = A.note || "";
+  const list = A.reviews.filter((r) => r.status !== "ok");
+  $("mList").innerHTML = list.length ? list.slice(0, 8).map((r) => {
+    const acts = r.status === "pending"
+      ? `<button class="btn sm danger" data-aidec="suspend" data-id="${r.id}">확인 → 안전교육 배지 정지</button><button class="btn sm ghost" data-aidec="dismiss" data-id="${r.id}">오판으로 처리</button>`
+      : r.status === "suspended" ? `<button class="btn sm" data-airetrain="${r.id}">재교육 이수 → 배지 재발급</button>` : "";
+    const extra = r.revokedTokenId ? ` · 정지 #${r.revokedTokenId}` : "";
+    const extra2 = r.reissuedTokenId ? ` · 재발급 #${r.reissuedTokenId}` : "";
+    const src = (r.source === "auto" ? `<span class="chip none" style="margin-left:4px">작업 종료 후 자동 · ${esc(r.equipment || "")}${r.durationSec ? " · " + Math.ceil(r.durationSec / 60) + "분" : ""}</span>` : "")
+      + (r.input === "phone-sensor" ? `<span class="chip ok" style="margin-left:4px">📡 휴대폰 센서 실측 ${r.sensorSeconds}초</span>` : r.source === "auto" ? `<span class="chip none" style="margin-left:4px">시험용 기록</span>` : "");
+    return `<div class="rev"><div class="top"><span><b>#${r.id} ${esc(r.workerName)}</b> · ${r.input === "phone-sensor" ? `z ${r.anomaly.toFixed(1)} (기준 ${r.threshold.toFixed(1)})` : `이상 점수 ${r.anomaly.toFixed(3)}`}${src}</span><span class="st ${r.status}">${ST_KO[r.status]}</span></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">${esc(r.courses.join(", ") || "숙련도 부족")}${extra}${extra2}</div>
+      ${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
+  }).join("") : '<p class="empty">아직 권고가 없어요.</p>';
+}
+
+function showVC(r, title) {
+  const cls = r.ok ? "ok" : "no";
+  $("vResult").className = "result " + cls;
+  $("vResult").innerHTML = `
+    <div class="verdict ${cls}">${r.ok ? "✅ 진짜 VC" : "❌ 믿을 수 없는 VC"}</div>
+    <div style="font-size:13px;margin-top:2px">${esc(title)}${r.tokenId ? ` · 배지 #${r.tokenId}` : ""}</div>
+    <ol class="vsteps">${r.steps.map((s) => `<li class="${s.ok ? "ok" : "no"}"><span class="m">${s.ok ? "✓" : "✗"}</span><div><b>${esc(s.label)}</b><div class="d">${esc(s.detail)}</div></div></li>`).join("")}</ol>
+    ${r.hash ? `<p class="hash" style="margin-top:8px">이 VC의 지문 ${esc(r.hash)}</p>` : ""}`;
+}
+async function loadVC(tokenId) {
+  const r = await api("/api/vc", { tokenId: +tokenId });
+  $("vBadge").value = String(tokenId);
+  $("vText").value = JSON.stringify(r.vc, null, 2);
+  $("vHash").textContent = "체인에 저장된 지문과 같아야 하는 값: " + r.hash;
+  return r;
+}
+
+async function run(btn, fn) {
+  btn.disabled = true;
+  try { await fn(); await refresh(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.days) return run(t, async () => { await api("/api/time", { days: +t.dataset.days }); toast(`${t.dataset.days}일이 지났어요`); });
+  if (t.dataset.eq) { selectedEq = t.dataset.eq; document.querySelectorAll(".eq").forEach((b) => b.setAttribute("aria-pressed", b.dataset.eq === selectedEq)); return; }
+  if (t.dataset.revoke) return run(t, async () => { await api("/api/revoke", { tokenId: +t.dataset.revoke, reason: "관리자 정지(사고·위반)" }); toast(`배지 #${t.dataset.revoke} 정지`); });
+  if (t.dataset.vc) return run(t, async () => { await loadVC(t.dataset.vc); $("h-vc").scrollIntoView({ behavior: "smooth" }); toast(`배지 #${t.dataset.vc} 의 VC를 불러왔어요`); });
+  if (t.dataset.forge) return run(t, async () => {
+    if (!$("vBadge").value) throw new Error("먼저 배지를 고르세요");
+    const r = await api("/api/vc/forge", { tokenId: +$("vBadge").value, kind: t.dataset.forge });
+    $("vText").value = JSON.stringify(r.vc, null, 2);
+    showVC(r, "[위조] " + t.textContent);
+  });
+  if (t.dataset.base !== undefined && t.dataset.base !== "") return run(t, async () => { await api("/api/net/base", { base: t.dataset.base }); phoneDrawn = ""; toast("휴대폰 주소를 바꿨어요 — 장비 화면 QR도 새 주소로 바뀌어요"); });
+  if (t.dataset.reg) return run(t, async () => {
+    const r = await api("/api/register/decide", { id: +t.dataset.id, action: t.dataset.reg, worker: t.dataset.worker });
+    toast(t.dataset.reg === "link" ? `휴대폰 지갑으로 교체 · 배지 ${r.reissued}개 재발급` : t.dataset.reg === "new" ? "새 작업자로 등록했어요 — 이제 배지를 발급하세요" : t.dataset.reg === "face" ? "얼굴 등록을 승인했어요" : "등록 요청을 거절했어요");
+  });
+  if (t.dataset.endeq) return run(t, async () => { await api("/api/session/end", { eq: t.dataset.endeq, by: "admin" }); toast("운용을 종료했어요 — AI 분석이 자동으로 돌았어요"); });
+  if (t.dataset.aidec) return run(t, async () => {
+    if (t.dataset.aidec === "suspend" && !confirm("AI 권고를 확인했어요. 이 작업자의 안전교육 배지를 정지할까요? (모든 장비 시동이 막혀요)")) return;
+    const r = await api("/api/ai/decide", { id: +t.dataset.id, action: t.dataset.aidec });
+    toast(t.dataset.aidec === "suspend" ? `안전교육 배지 #${r.review.revokedTokenId} 정지 — 재교육 전까지 장비 사용 불가` : "오판으로 처리했어요 — 배지 유지");
+  });
+  if (t.dataset.airetrain) return run(t, async () => { const r = await api("/api/ai/retrain", { id: +t.dataset.airetrain }); toast(`재교육 이수 → 안전교육 배지 #${r.tokenId} 재발급`); });
+  if (t.dataset.renew) return run(t, async () => { await api("/api/renew", { tokenId: +t.dataset.renew, days: 365 }); toast(`배지 #${t.dataset.renew} 365일 연장`); });
+});
+$("reset").onclick = (e) => { if (!confirm("저장된 배지와 기록을 모두 지우고 처음 상태로 돌아갈까요?")) return; run(e.target, async () => { await api("/api/reset", {}); $("result").className = "result"; $("result").innerHTML = '<p class="empty">처음 상태로 돌아왔어요.</p>'; }); };
+$("iBtn").onclick = (e) => run(e.target, async () => { const r = await api("/api/issue", { worker: $("iWorker").value, type: +$("iType").value, days: +$("iDays").value }); toast(`배지 #${r.tokenId} 발급 (${r.gas.toLocaleString()} gas)`); });
+$("aBtn").onclick = (e) => run(e.target, async () => { const r = await api("/api/access", { worker: $("aWorker").value, equipment: selectedEq }); showResult(r, `${r.equipment.name} · ${r.claimed}`); });
+$("kBtn").onclick = (e) => run(e.target, async () => {
+  const r = await api("/api/access", { worker: $("kClaim").value, signer: $("kSigner").value, equipment: selectedEq });
+  showResult(r, `${r.equipment.name} · "${r.claimed}"(이)라고 주장`);
+});
+$("rBtn").onclick = (e) => run(e.target, async () => { const r = await api("/api/replay", {}); showResult(r, `${r.equipment.name} · 지난 서명 재사용`); });
+$("tBtn").onclick = (e) => run(e.target, async () => {
+  const [tokenId, from] = $("tBadge").value.split("|");
+  const r = await api("/api/transfer", { from, to: $("tTo").value, tokenId: +tokenId });
+  $("result").className = "result " + (r.blocked ? "no" : "ok");
+  $("result").innerHTML = `<div class="verdict ${r.blocked ? "no" : "ok"}">${r.blocked ? "🔒 전송 차단" : "⚠ 전송됨"}</div><div style="font-size:13px;margin-top:4px">${esc(r.message || "")}</div>`;
+});
+
+$("baseBtn").onclick = (e) => run(e.target, async () => { await api("/api/net/base", { base: $("baseIn").value }); phoneDrawn = ""; toast($("baseIn").value.trim() ? "주소를 적용했어요" : "자동 주소로 돌아갔어요"); });
+$("mBtn").onclick = (e) => run(e.target, async () => { const d = await api("/api/ai/analyze", { worker: $("mWorker").value, style: $("mStyle").value }); showAI(d); });
+$("vLoad").onclick = (e) => run(e.target, async () => { if (!$("vBadge").value) throw new Error("VC가 있는 배지가 없어요"); await loadVC($("vBadge").value); $("vResult").className = "result"; $("vResult").innerHTML = '<p class="empty">불러왔어요. 이제 검증해 보세요.</p>'; });
+$("vCheck").onclick = (e) => run(e.target, async () => {
+  if (!$("vText").value.trim()) throw new Error("VC 원문이 비어 있어요");
+  const r = await api("/api/vc/verify", { vc: $("vText").value, label: "직접 입력" });
+  showVC(r, "입력한 VC");
+});
+$("vSave").onclick = () => {
+  if (!$("vText").value.trim()) return toast("저장할 VC가 없어요", true);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("vText").value], { type: "application/json" }));
+  a.download = `vc-badge-${$("vBadge").value || "x"}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("vFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $("vText").value = await f.text(); e.target.value = "";
+  $("vCheck").click();
+};
+
+refresh().catch((e) => toast(e.message, true));
+// 5초마다 서버가 살아 있는지 확인
+setInterval(() => { if (location.protocol !== "file:") fetch("/api/state").then(() => setConn(true)).catch(() => setConn(false)); }, 5000);
+if (location.protocol === "file:") { setConn(false); $("conn").textContent = "⚠ 이 파일을 직접 열었어요. 폴더의 start.bat 을 더블클릭해서 실행하세요."; }
+</script>
+</body>
+</html>

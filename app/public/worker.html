@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>작업자 지갑 — WorkerBadge</title>
+<style>
+/* 휴대폰용 작업자 앱: 내 지갑 만들기 → 서명으로 등록 요청 → 발급기관 승인 → QR 인증(EIP-712 서명) → 사용 중·작업 종료, 내 배지·VC·AI 분석 */
+:root{--bg:#F3F4F6;--panel:#FFFFFF;--ink:#1B222C;--muted:#5F6B7A;--line:#DDE1E7;--amber:#F2A900;--amber-ink:#3A2A00;--steel:#1F6F8B;
+  --ok:#1E7B4C;--ok-bg:#E3F4EA;--no:#B8382C;--no-bg:#FBE8E6;--off:#8A93A0;--off-bg:#EEF0F3;--wait:#8A5A00;--wait-bg:#FFF2D6;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;--sans:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif}
+@media (prefers-color-scheme: dark){:root{--bg:#12161C;--panel:#1A2029;--ink:#E6E9EE;--muted:#9AA4B2;--line:#2C3440;--amber:#F2B624;--amber-ink:#2A1F00;--steel:#6FB3CC;
+  --ok:#6FD39E;--ok-bg:#16301F;--no:#F08A7E;--no-bg:#3A1C19;--off:#7D8695;--off-bg:#232A34;--wait:#F2C46A;--wait-bg:#33280F;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;background:#1B222C;color:#fff;position:sticky;top:0;z-index:2}
+header h1{font-size:16px;margin:0}
+main{padding:14px 16px 40px;max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.card h2{font-size:15px;margin:0 0 8px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+button,input{font:inherit}
+button{cursor:pointer}
+.btn{border:0;border-radius:10px;padding:11px 14px;font-weight:700;background:var(--amber);color:var(--amber-ink);width:100%}
+.btn:disabled{opacity:.5;cursor:wait}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:500;width:auto;padding:6px 12px}
+.btn.stop{background:var(--no);color:#fff}
+.btn:focus-visible,input:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font-size:20px;letter-spacing:6px;text-align:center;font-family:var(--mono)}
+.who{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.who button{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:14px;font-weight:700;color:var(--ink)}
+.scan{border:2px solid var(--amber)}
+.res.ok{border-color:var(--ok);background:var(--ok-bg)} .res.no{border-color:var(--no);background:var(--no-bg)} .res.wait{border-color:var(--wait);background:var(--wait-bg)}
+.verdict{font-size:26px;font-weight:800}
+.res.ok .verdict{color:var(--ok)} .res.no .verdict{color:var(--no)} .res.wait .verdict{color:var(--wait)}
+.timer{font:800 40px var(--mono);margin:4px 0}
+.chip{display:inline-block;font-size:12px;padding:1px 9px;border-radius:999px;border:1px solid var(--line);margin:2px 4px 2px 0}
+.chip.ok{color:var(--ok);background:var(--ok-bg);border-color:transparent} .chip.no{color:var(--no);background:var(--no-bg);border-color:transparent}
+.chip.off{color:var(--off);background:var(--off-bg);border-color:transparent} .chip.wait{color:var(--wait);background:var(--wait-bg);border-color:transparent}
+.item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:0}
+.kv{display:grid;grid-template-columns:76px 1fr;gap:2px 8px;font-size:13px;background:var(--bg);border-radius:8px;padding:8px 10px;margin:0 0 10px}
+.kv b{color:var(--muted);font-weight:500}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;font:11px/1.4 var(--mono);overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-all}
+.mono{font-family:var(--mono);font-size:11.5px;color:var(--muted);word-break:break-all}
+.empty{color:var(--muted);font-size:13px;margin:0}
+.warn{font-size:12.5px;color:var(--muted);background:var(--off-bg);border-radius:8px;padding:8px 10px}
+.cam{position:relative;width:230px;height:230px;margin:6px auto 10px;border-radius:50%;overflow:hidden;background:#000;border:5px solid var(--line);transition:border-color .2s}
+.cam.ok{border-color:var(--ok)} .cam.wait{border-color:var(--amber)}
+.cam video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.bar{height:6px;border-radius:3px;background:var(--off-bg);overflow:hidden;margin:4px 0 10px} .bar i{display:block;height:100%;width:0;background:var(--ok);transition:width .2s}
+.err{font-size:13px;color:var(--no);background:var(--no-bg);border-radius:8px;padding:8px 10px;margin-top:8px}
+</style>
+</head>
+<body>
+<header><h1>👷 작업자 지갑</h1><span id="me" style="font-size:13px"></span></header>
+<main>
+  <section class="card" id="login" hidden aria-live="polite">
+    <div id="stepWallet">
+      <h2>① 내 지갑 만들기</h2>
+      <p class="sub">이 휴대폰 안에 나만의 지갑(개인 키)을 만들어요. 개인 키는 <b>이 휴대폰 밖으로 나가지 않고</b>, 서버에는 주소와 서명만 보내요.</p>
+      <button class="btn" id="mkWallet">지갑 만들기</button>
+    </div>
+    <div id="stepReg" hidden>
+      <h2>② 작업자 등록 요청</h2>
+      <p class="sub">내 지갑 주소 <span class="mono" id="myAddr"></span></p>
+      <label class="sub" for="nm" style="display:block;margin:0 0 4px">이름</label>
+      <input id="nm" maxlength="20" placeholder="예: 민우" style="letter-spacing:0;font-size:17px;font-family:var(--sans)">
+      <div id="codeBox" hidden style="margin-top:10px">
+        <label class="sub" for="code" style="display:block;margin:0 0 4px">PC 관리자 화면의 <b>휴대폰 연결 코드</b> (6자리)</label>
+        <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+      </div>
+      <button class="btn" id="regBtn" style="margin-top:12px">이 지갑으로 등록 요청</button>
+      <p class="sub" style="margin:10px 0 0">😀 등록 버튼을 누르면 먼저 <b>얼굴을 등록</b>해요 (얼굴 정보는 이 휴대폰에만 저장).</p>
+      <p class="warn" style="margin-top:10px">등록 요청에는 이 지갑으로 한 <b>서명</b>이 함께 가요. 그래서 남의 지갑 주소로 등록할 수 없어요. 발급기관이 본인을 확인하고 승인하면, 그 주소로 배지가 발급돼요.</p>
+    </div>
+    <div id="stepWait" hidden>
+      <h2>③ 발급기관 승인 대기 중</h2>
+      <p class="sub"><b id="waitName"></b> · <span class="mono" id="waitAddr"></span></p>
+      <p class="warn">PC 관리자 화면의 <b>작업자 등록 요청</b>에서 승인하면 자동으로 넘어가요. 실제 현장이라면 이 단계에서 신분증·자격증 원본으로 본인을 확인해요.</p>
+      <button class="btn ghost" id="regAgain" style="margin-top:8px">다시 요청하기</button>
+      <a href="/sensor" class="btn ghost" style="display:inline-block;text-decoration:none;margin:8px 0 0 6px">🧪 센서 실험</a>
+    </div>
+    <p class="err" id="loginErr" hidden></p>
+  </section>
+
+  <section class="card" id="face" hidden aria-live="polite">
+    <h2 id="fTitle">😀 얼굴 확인</h2>
+    <div class="cam" id="fCam"><video id="fVid" playsinline muted autoplay></video></div>
+    <p class="sub" id="fMsg" style="text-align:center;min-height:2.6em"></p>
+    <div class="bar"><i id="fBar"></i></div>
+    <button class="btn ghost" id="fCancel" style="width:100%">취소</button>
+  </section>
+  <section class="card scan" id="scan" hidden aria-live="polite"></section>
+  <section class="card res ok" id="using" hidden aria-live="polite"></section>
+
+  <section class="card" id="home" hidden>
+    <h2>장비 쓰는 법</h2>
+    <p class="sub" style="margin:0">장비 화면의 QR을 휴대폰 <b>기본 카메라</b>로 찍으면 이 앱이 열려요. 서명하면 장비가 블록체인에서 자격을 확인하고 바로 시동 여부를 정해요. 작업이 끝나면 <b>작업 종료</b>를 눌러 주세요.</p>
+    <a href="/sensor" class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:10px;width:100%">🧪 센서 실험 — AI 검증용 실제 센서 기록 모으기</a>
+  </section>
+  <section class="card" id="faceInfo" hidden><h2>😀 내 얼굴 확인</h2><div id="fiBody"></div>
+    <p class="warn" style="margin:10px 0 0">얼굴 사진은 저장하지 않고, 얼굴 <b>특징값(숫자 128개)</b>만 <b>이 휴대폰 안에</b> 저장해요. 서버·장비·블록체인에는 "일치 / 불일치" 결과만 가요. 시동 서명 전마다 얼굴과 고개 돌림(사진이 아닌 실제 사람인지)을 확인해서, 휴대폰을 빌려줘도 다른 사람은 시동을 걸 수 없어요.</p></section>
+  <section class="card" id="badges" hidden><h2>내 자격 배지</h2><div id="blist"></div></section>
+  <section class="card" id="vcs" hidden><h2>내 자격증명서 (VC)</h2><p class="sub">다른 회사·감독관에게 자격을 보여 줄 때 이 파일을 내요.</p><div id="vlist"></div></section>
+  <section class="card" id="ai" hidden><h2>내 작업 기록 · AI 분석</h2><div id="alist"></div></section>
+</main>
+<script src="/vendor/ethers.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ST_KO = { pending: "발급기관 확인 대기", suspended: "안전교육 배지 정지 · 재교육 중", retrained: "재교육 이수 · 재발급", dismissed: "오판으로 처리됨", ok: "정상 범위" };
+const BY_KO = { phone: "휴대폰에서 종료", equipment: "장비 화면에서 종료", seat: "작업자 이탈 (좌석 센서)", admin: "관리자가 종료" };
+const isPC = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+let ME = null, DATA = null, pending = null, memStore = null, tick = null, waitTimer = null;
+
+// 이 휴대폰의 지갑: { key, address, token, name } — key 는 여기(브라우저 저장소)에만 있다
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem("wb-wallet-v2")); } catch { return memStore; } },
+  set(v) { memStore = v; try { v ? localStorage.setItem("wb-wallet-v2", JSON.stringify(v)) : localStorage.removeItem("wb-wallet-v2"); } catch {} },
+};
+const REG_MESSAGE = (name, address, ts) => `WorkerBadge 작업자 등록\n이름: ${name}\n지갑 주소: ${address}\n시각: ${ts}`;
+
+// ───────── 얼굴 확인 (전부 이 휴대폰 안에서) ─────────
+// 등록본: { fid(무작위 번호), address, desc(특징값 128개), at } — 사진은 저장하지 않는다. 서버에는 fid 와 결과만 간다.
+const FACE_KEY = "wb-face-v1", FACE_MATCH = 0.5; // 특징값 거리 0.5 미만이면 같은 사람 (face-api 기본 0.6보다 엄격)
+let faceMem = null, faceLib = null;
+const faceStore = {
+  get() { let f; try { f = JSON.parse(localStorage.getItem(FACE_KEY)); } catch { f = faceMem; } return f && ME && f.address === ME.address ? f : null; },
+  set(v) { faceMem = v; try { v ? localStorage.setItem(FACE_KEY, JSON.stringify(v)) : localStorage.removeItem(FACE_KEY); } catch {} },
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function loadFaceLib(msg) {
+  return faceLib ||= (async () => {
+    msg("얼굴 인식 모델을 불러오는 중… (처음 한 번, 약 7MB)");
+    if (!window.faceapi) await new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "/vendor/face-api.js"; sc.onload = ok; sc.onerror = () => no(new Error("얼굴 인식 파일을 못 불러왔어요")); document.head.appendChild(sc); });
+    // 휴대폰 GPU(WebGL)로 계산, 안 되면 CPU — 모두 이 휴대폰 안에서만
+    let be = null;
+    for (const name of ["webgl", "cpu"]) { try { if (await faceapi.tf.setBackend(name)) { be = name; break; } } catch {} }
+    if (!be) throw new Error("이 휴대폰 브라우저에서 얼굴 인식을 실행할 수 없어요");
+    await faceapi.tf.ready();
+    const M = "/vendor/face-models";
+    await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(M), faceapi.nets.faceLandmark68Net.loadFromUri(M), faceapi.nets.faceRecognitionNet.loadFromUri(M)]);
+    return faceapi;
+  })().catch((e) => { faceLib = null; throw e; });
+}
+const pdist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// 살아 있는 사람 확인: 고개를 돌리면 "코가 두 눈 사이 어디쯤 있는지"(yaw) 비율이 바뀐다.
+// 사진·화면은 평평해서 기울이거나 돌려도 이 비율이 거의 그대로 → 사진으로는 통과 못 함
+const cx = (pts) => pts.reduce((t, p) => t + p.x, 0) / pts.length;
+const YAW = (lm) => { const l = cx(lm.getLeftEye()), r = cx(lm.getRightEye()); return (lm.getNose()[3].x - l) / (r - l); };
+const fdist = (a, b) => { let t = 0; for (let i = 0; i < a.length; i++) t += (a[i] - b[i]) ** 2; return Math.sqrt(t); };
+// mode "enroll": 얼굴 등록 (정면 특징값 5개 평균 + 고개 돌림) / "verify": 등록본과 비교 (정면 일치 2번 + 고개 돌림)
+function faceSession(mode) {
+  return new Promise(async (resolve, reject) => {
+    const card = $("face"), cam = $("fCam"), v = $("fVid");
+    const msg = (t) => { $("fMsg").textContent = t; }, bar = (p) => { $("fBar").style.width = Math.round(Math.min(1, p) * 100) + "%"; };
+    let stream = null, done = false;
+    const finish = (err, val) => { if (done) return; done = true; if (stream) stream.getTracks().forEach((t) => t.stop()); v.srcObject = null; card.hidden = true; err ? reject(err) : resolve(val); };
+    $("fTitle").textContent = mode === "enroll" ? "😀 얼굴 등록" : "😀 얼굴 확인 — 본인만 시동";
+    $("fCancel").onclick = () => finish(new Error("얼굴 확인을 취소했어요"));
+    card.hidden = false; cam.className = "cam"; bar(0); card.scrollIntoView({ behavior: "smooth", block: "center" });
+    try {
+      if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+        throw new Error("카메라는 https 주소에서만 열려요 — PC 관리자 화면의 휴대폰 QR(인터넷 주소)로 다시 열어 주세요");
+      const api = await loadFaceLib(msg);
+      msg("카메라를 켜는 중…");
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 480 } }, audio: false }); }
+      catch { throw new Error("카메라를 쓸 수 없어요 — 카메라 권한을 허용해 주세요"); }
+      v.srcObject = stream; await v.play();
+      const opts = new api.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+      const ref = mode === "verify" ? faceStore.get().desc : null;
+      const yaws = [], samples = []; let base = null, live = false, hits = 0, best = Infinity, n = 0;
+      const t0 = Date.now();
+      while (!done) {
+        if (Date.now() - t0 > 25000) {
+          throw new Error(mode === "verify" && best < Infinity && hits < 2 ? `등록된 얼굴과 달라요 (거리 ${best.toFixed(2)} — ${FACE_MATCH} 미만이어야 함) · 서명하지 않았어요`
+            : !live ? "고개 돌림이 확인되지 않았어요 (사진·화면으로는 통과할 수 없어요). 다시 시도해 주세요" : "얼굴 확인 시간이 지났어요. 밝은 곳에서 다시 시도해 주세요");
+        }
+        const needDesc = mode === "enroll" ? samples.length < 5 : hits < 2;
+        const q = api.detectAllFaces(v, opts).withFaceLandmarks();
+        const r = needDesc && n++ % 2 === 0 ? await q.withFaceDescriptors() : await q;
+        if (done) break;
+        if (r.length !== 1) { cam.className = "cam"; msg(r.length ? "한 사람만 화면에 나오게 해 주세요" : "얼굴이 안 보여요 — 원 안에 얼굴을 맞춰 주세요"); await sleep(100); continue; }
+        const d = r[0], y = YAW(d.landmarks);
+        if (base === null) { yaws.push(y); if (yaws.length >= 3) base = [...yaws].sort((a, b) => a - b)[1]; } // 처음 자세(중앙값)
+        const front = base === null || Math.abs(y - base) < 0.06;
+        if (base !== null && Math.abs(y - base) > 0.12) live = true;
+        if (d.descriptor && front) {
+          if (mode === "enroll") samples.push(Array.from(d.descriptor));
+          else { const dd = fdist(ref, d.descriptor); best = Math.min(best, dd); if (dd < FACE_MATCH) hits++; }
+        }
+        const got = mode === "enroll" ? samples.length / 5 : hits / 2;
+        cam.className = "cam " + (got >= 1 && live ? "ok" : "wait");
+        bar(Math.min(1, got) * 0.6 + (live ? 0.4 : 0));
+        msg(got < 1 ? (mode === "verify" && best < Infinity && hits === 0 ? "등록된 얼굴과 비교 중… 정면을 봐 주세요" : live ? "좋아요 — 이제 다시 정면을 봐 주세요" : mode === "enroll" ? "좋아요 — 그대로 정면을 봐 주세요" : "얼굴 확인 중… 정면을 봐 주세요")
+          : !live ? "↔ 고개를 왼쪽이나 오른쪽으로 살짝 돌려 주세요" : "확인됐어요");
+        if (got >= 1 && live) {
+          if (mode === "enroll") {
+            const mean = samples[0].map((_, i) => samples.reduce((t, x) => t + x[i], 0) / samples.length);
+            if (samples.some((x) => fdist(x, mean) > 0.4)) { samples.length = 0; msg("얼굴이 흔들렸어요 — 다시 정면을 봐 주세요"); continue; }
+            const rec = { fid: [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join(""),
+              address: ME.address, desc: mean.map((x) => Math.round(x * 1e5) / 1e5), at: Date.now() };
+            faceStore.set(rec);
+            await sleep(400); return finish(null, rec);
+          }
+          await sleep(300); return finish(null, { ok: true, live: true, dist: Math.round(best * 1000) / 1000, fid: faceStore.get().fid });
+        }
+        await sleep(30);
+      }
+    } catch (e) { finish(e); }
+  });
+}
+// 지금 이 휴대폰의 얼굴 상태: need(등록 전) / pending(승인 대기) / resend(승인 안 됨) / ok
+function faceState() {
+  const f = faceStore.get();
+  if (!f) return "need";
+  if (DATA && DATA.faceId === f.fid) return "ok";
+  if (DATA && DATA.facePending === f.fid) return "pending";
+  return "resend";
+}
+function renderFaceInfo() {
+  const st = faceState(), f = faceStore.get();
+  $("fiBody").innerHTML = {
+    ok: `<p style="margin:0"><span class="chip ok">✓ 승인된 얼굴</span> <span class="mono">${f ? new Date(f.at).toLocaleDateString("ko-KR") : ""} 등록</span></p>`,
+    pending: `<p style="margin:0"><span class="chip wait">발급기관 승인 대기</span></p><p class="sub" style="margin:6px 0 0">PC 관리자 화면에서 얼굴 등록을 승인하면 시동할 수 있어요.</p>`,
+    resend: `<p style="margin:0"><span class="chip no">승인 안 됨</span></p><button class="btn" id="fiSend" style="margin-top:8px">발급기관에 승인 다시 요청</button>`,
+    need: `<p style="margin:0"><span class="chip no">얼굴 미등록</span></p><button class="btn" id="fiEnroll" style="margin-top:8px">얼굴 등록하고 승인 요청</button>`,
+  }[st];
+  if ($("fiEnroll")) $("fiEnroll").onclick = () => enrollAndRequest().catch((e) => alertBox($("faceInfo"), e.message));
+  if ($("fiSend")) $("fiSend").onclick = () => authenticate(ME.name || "", "").then(refresh).catch((e) => alertBox($("faceInfo"), e.message));
+}
+async function enrollAndRequest() {
+  await faceSession("enroll");
+  await authenticate(ME.name || "", ""); // 이미 등록된 휴대폰 → 얼굴 승인 요청만 만들어진다
+  await refresh();
+}
+async function rawApi(p, body) {
+  const r = await fetch(p, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json(); return { status: r.status, j };
+}
+// 서명으로 "이 주소의 주인"임을 증명하고 토큰을 받는다 (이미 등록된 휴대폰이면 코드 없이 다시 로그인)
+async function authenticate(name, code) {
+  const w = store.get(); const wallet = new ethers.Wallet(w.key); const ts = Date.now();
+  const signature = await wallet.signMessage(REG_MESSAGE(name, wallet.address, ts));
+  const f = faceStore.get();
+  const { j } = await rawApi("/api/register", { address: wallet.address, name, ts, signature, code, faceId: f ? f.fid : null });
+  if (!j.ok) throw new Error(j.error);
+  store.set({ ...w, token: j.data.token, name: j.data.name || name });
+  return j.data;
+}
+async function api(p, body) {
+  let { status, j } = await rawApi(p, body);
+  if (status === 401 && ME && ME.key && body && "token" in body) { // 서버를 다시 켜서 토큰이 사라졌으면 서명으로 다시 로그인
+    try { await authenticate(ME.name || "", ""); ME = store.get(); ({ status, j } = await rawApi(p, { ...body, token: ME.token })); } catch { /* 아래에서 처리 */ }
+  }
+  if (!j.ok) throw Object.assign(new Error(j.error), { status }); return j.data;
+}
+const mmss = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
+function readScan() {
+  const m = /s=([A-Z]{2}-\d{3})\.(0x[0-9a-f]{64})/.exec(location.hash);
+  if (m) { pending = { eq: m[1], nonce: m[2] }; history.replaceState(null, "", location.pathname); }
+}
+
+async function showScan() {
+  const box = $("scan");
+  if (!pending) { box.hidden = true; return; }
+  box.hidden = false; box.className = "card scan";
+  try {
+    const d = await api("/api/eq/challenge", pending);
+    const m = d.typedData && d.typedData.message;
+    box.innerHTML = `<h2>🚜 ${esc(d.equipment.name)} 시동 인증</h2>
+      ${d.valid ? `<p class="sub">아래 내용에 이 휴대폰 지갑으로 서명해요 (EIP-712 · 가스비 없음).</p>
+        <div class="kv"><b>장비</b><span>${esc(m.equipmentId)}</span><b>유효 시각</b><span>${new Date(m.expiresAt * 1000).toLocaleTimeString("ko-KR")}까지</span>
+        <b>체인</b><span>${d.typedData.domain.chainId}</span><b>nonce</b><span class="mono">${m.nonce.slice(0, 18)}…</span></div>
+        ${d.busy && d.busy.worker !== ME.worker ? `<p class="warn">⏳ 지금 ${esc(d.busy.workerName)} 님이 사용 중이에요. 서명해도 작업이 끝날 때까지 보류돼요.</p>` : ""}
+        <button class="btn" id="sign">서명하고 시동 요청</button>`
+      : `<p class="sub">이 QR은 만료됐거나 이미 쓰였어요. 장비 화면의 새 QR을 다시 찍으세요.</p><button class="btn ghost" id="close">닫기</button>`}`;
+    if ($("sign")) $("sign").onclick = () => sign(d.typedData);
+    if ($("close")) $("close").onclick = () => { pending = null; showScan(); };
+  } catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+// ───────── 작업 중 휴대폰 센서 기록 (작업 종료 때 AI 가 이 실제 기록으로 분석) ─────────
+// 휴대폰을 장비(카트·RC카)에 붙여 두면 가속도·회전 속도가 기록된다. 아이폰은 버튼을 누른 순간에만 센서 권한을 물을 수 있어서
+// '서명하고 시동 요청'을 누를 때 함께 묻는다.
+const MAX_ROWS = 36000; // 약 10분 (60Hz) — 더 길면 마지막 10분만
+const motion = { permP: null, sid: null, t0: 0, samples: [], grav: null, src: null, on: false };
+function askMotion() { // 반드시 버튼 클릭 안에서 await 보다 먼저 부른다
+  try {
+    motion.permP = typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function"
+      ? DeviceMotionEvent.requestPermission().catch(() => "denied")
+      : Promise.resolve(typeof DeviceMotionEvent !== "undefined" ? "granted" : "unsupported");
+  } catch { motion.permP = Promise.resolve("denied"); }
+}
+function onMotion(e) {
+  let ax, ay, az;
+  const a = e.acceleration;
+  if (a && a.x != null) { ax = a.x; ay = a.y; az = a.z; motion.src = "acceleration"; }
+  else {
+    const g = e.accelerationIncludingGravity; if (!g || g.x == null) return;
+    const raw = [g.x, g.y, g.z];
+    motion.grav = motion.grav ? motion.grav.map((v, i) => 0.9 * v + 0.1 * raw[i]) : raw;
+    [ax, ay, az] = raw.map((v, i) => v - motion.grav[i]); motion.src = "gravity-highpass";
+  }
+  if (![ax, ay, az].every(Number.isFinite)) return;
+  const r = e.rotationRate || {};
+  motion.samples.push([performance.now() / 1000 - motion.t0, ax, ay, az, r.alpha || 0, r.beta || 0, r.gamma || 0].map((v) => Math.round(v * 1e3) / 1e3));
+  if (motion.samples.length > MAX_ROWS) motion.samples.splice(0, motion.samples.length - MAX_ROWS);
+}
+async function startMotion(sid) {
+  if (motion.on && motion.sid === sid) return;
+  stopMotion();
+  if (!motion.permP) return; // 이 화면을 새로 열어서 권한을 아직 못 물었음 → '센서 켜기' 버튼
+  const p = await motion.permP;
+  if (p !== "granted") { motion.denied = p; return; }
+  Object.assign(motion, { sid, t0: performance.now() / 1000, samples: [], grav: null, on: true, denied: null });
+  window.addEventListener("devicemotion", onMotion);
+}
+function stopMotion() { window.removeEventListener("devicemotion", onMotion); motion.on = false; }
+function motionText() {
+  if (motion.on) {
+    const sec = motion.samples.length ? motion.samples[motion.samples.length - 1][0] - motion.samples[0][0] : 0;
+    return motion.samples.length ? `📡 휴대폰 센서 기록 중 · ${Math.floor(sec)}초 — 작업 종료 때 AI가 이 기록으로 분석해요`
+      : "📡 센서를 켰는데 값이 안 들어와요 (PC에는 센서가 없어요)";
+  }
+  return motion.denied ? "📡 센서 권한이 없어서 장비 화면의 시험용 기록으로 분석해요" : "📡 휴대폰 센서가 꺼져 있어요";
+}
+
+async function sign(td) {
+  askMotion();
+  const b = $("sign"); b.disabled = true; b.textContent = "얼굴 확인 중…";
+  try {
+    if (!DATA || !DATA.registered) await refresh();
+    const st = faceState();
+    if (st === "need") { await enrollAndRequest(); throw new Error("얼굴을 등록하고 발급기관에 승인을 요청했어요. 승인되면 장비 QR을 다시 찍어 주세요"); }
+    if (st === "pending") throw new Error("얼굴 등록이 아직 승인되지 않았어요 — 발급기관(PC 관리자 화면)에서 승인해야 시동할 수 있어요");
+    if (st === "resend") { await authenticate(ME.name || "", ""); await refresh(); throw new Error("이 휴대폰의 얼굴 등록본이 승인되지 않았어요. 발급기관에 승인을 다시 요청했어요"); }
+    const face = await faceSession("verify"); // 본인 얼굴 + 고개 돌림이 확인돼야만 서명한다
+    b.textContent = "서명하고 확인하는 중…";
+    const wallet = new ethers.Wallet(ME.key);
+    const signature = await wallet.signTypedData(td.domain, td.types, td.message); // 개인 키는 이 휴대폰 밖으로 나가지 않는다 — 서명만 보낸다
+    const r = await api("/api/eq/verify", { eq: pending.eq, nonce: pending.nonce, signature, face });
+    const box = $("scan");
+    if (r.allowed) { box.hidden = true; pending = null; await refresh(); return; } // 사용 중 화면으로
+    const wait = !!r.busy;
+    box.className = "card res " + (wait ? "wait" : "no");
+    box.innerHTML = `<div class="verdict">${wait ? "⏳ 다른 작업자가 사용 중" : "❌ 사용 불가"}</div>
+      <p style="margin:4px 0 8px">${esc(r.equipment.name)} · ${esc(r.reason)}</p>
+      ${(r.checks || []).map((c) => `<span class="chip ${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✗"} ${esc(c.typeName)}</span>`).join("")}
+      ${r.face ? `<span class="chip ${r.face.ok ? "ok" : "no"}">${r.face.ok ? "✓" : "✗"} 얼굴 확인</span>` : ""}
+      ${r.advice ? `<p class="warn" style="margin-top:10px">👉 ${esc(r.advice)}</p>` : ""}
+      <button class="btn ghost" id="close" style="margin-top:10px">닫기</button>`;
+    $("close").onclick = () => { pending = null; showScan(); };
+    pending = null; refresh();
+  } catch (e) { b.disabled = false; b.textContent = "다시 시도"; const p = document.createElement("p"); p.className = "err"; p.textContent = e.message; $("scan").appendChild(p); }
+}
+
+function renderUsing() {
+  const box = $("using");
+  const a = DATA && DATA.active && DATA.active[0];
+  clearInterval(tick);
+  if (!a) { stopMotion(); if (!box.dataset.keep) box.hidden = true; return; }
+  delete box.dataset.keep;
+  startMotion(a.id);
+  const mine = DATA.badges.filter((b) => b.current);
+  box.hidden = false; box.className = "card res ok";
+  box.innerHTML = `<div class="verdict">✅ 사용 중</div>
+    <p style="margin:2px 0 0">${esc(a.equipment)} · ${esc(a.workerName)} · ${new Date(a.startedAt).toLocaleTimeString("ko-KR")} 시작</p>
+    <div class="timer" id="tm">${mmss(Date.now() - a.startedAt)}</div>
+    <div>${mine.map((b) => `<span class="chip ${b.valid ? "ok" : "no"}">${esc(b.typeName)} · ${b.valid ? b.daysLeft + "일 남음" : b.revoked ? "정지" : "만료"}</span>`).join("")}</div>
+    <p class="sub" id="mot" style="margin:10px 0 0">${esc(motionText())}</p>
+    <button class="btn ghost" id="motOn" style="margin-top:6px;width:100%" ${motion.on ? "hidden" : ""}>📡 휴대폰 센서 켜기 (휴대폰을 장비에 붙여 두세요)</button>
+    <button class="btn stop" id="end" style="margin-top:12px">작업 종료</button>
+    <p class="sub" style="margin:8px 0 0">종료하면 운용 시간이 기록되고, 이번 작업 기록을 AI가 바로 분석해요.</p>`;
+  $("motOn").onclick = async () => { askMotion(); await startMotion(a.id); $("mot").textContent = motionText(); $("motOn").hidden = motion.on; };
+  tick = setInterval(() => { const t = $("tm"); if (t) t.textContent = mmss(Date.now() - a.startedAt); const m = $("mot"); if (m) m.textContent = motionText(); const o = $("motOn"); if (o) o.hidden = motion.on; }, 1000);
+  $("end").onclick = async () => {
+    $("end").disabled = true;
+    try {
+      const sensor = motion.on && motion.sid === a.id && motion.samples.length ? { samples: motion.samples, source: motion.src } : null;
+      const r = await api("/api/session/end", { eq: a.eq, token: ME.token, sensor });
+      stopMotion();
+      clearInterval(tick);
+      const ai = r.review;
+      box.dataset.keep = "1";
+      box.className = "card res " + (ai && ai.flagged ? "wait" : "ok");
+      box.innerHTML = `<div class="verdict">🏁 작업 종료</div>
+        <p style="margin:4px 0">${esc(r.usage.equipment)} · 운용 시간 ${mmss(r.usage.durationSec * 1000)}</p>
+        ${ai ? (() => {
+          const ph = r.aiSource === "phone";
+          const src = ph ? `📡 휴대폰 센서 ${ai.sensorSeconds}초 실측` : "🧪 시험용(시뮬레이션) 기록";
+          const sc = ph ? `z ${ai.anomaly.toFixed(1)} · 기준 ${ai.threshold.toFixed(1)}` : `이상 점수 ${ai.anomaly.toFixed(3)} · 기준 ${ai.threshold.toFixed(3)}`;
+          const why = (ai.recommendations || []).slice(0, 3).map((x) => `${esc(x.label.split(" (")[0])} z ${x.z}`).join(" · ");
+          return (ai.flagged
+            ? `<p class="warn">⚠ AI 분석 (${src}): 숙련자와 다른 조작이 보여서 <b>재교육 권고</b>가 발급기관에 전달됐어요 (${sc}).${why ? `<br>크게 벗어난 행동: ${why}` : ""}<br>추천 교육: ${esc(ai.courses.join(", ") || "-")}<br>발급기관이 확인하기 전까지는 장비를 그대로 쓸 수 있어요.</p>`
+            : `<p class="warn">✅ AI 분석 (${src}): 정상 범위예요 (${sc}).</p>`)
+            + (r.aiNote ? `<p class="sub" style="margin:6px 0 0">${esc(r.aiNote)}</p>` : "");
+        })() : ""}
+        <button class="btn ghost" id="ok2" style="margin-top:8px">확인</button>`;
+      $("ok2").onclick = () => { delete box.dataset.keep; box.hidden = true; };
+      refresh();
+    } catch (e) { $("end").disabled = false; alertBox(box, e.message); }
+  };
+}
+function alertBox(el, msg) { const p = document.createElement("p"); p.className = "err"; p.textContent = msg; el.appendChild(p); }
+
+async function refresh() {
+  if (!ME || !ME.token) return;
+  DATA = await api("/api/me", { token: ME.token });
+  if (!DATA.registered) { showWaiting(DATA); return; }
+  if (!$("login").hidden) { store.set({ ...store.get(), name: DATA.name }); render(); return; } // 승인됨 → 화면 전환
+  renderUsing();
+  renderFaceInfo();
+  const cur = DATA.badges.filter((b) => b.current);
+  $("blist").innerHTML = DATA.types.map((tn, ti) => {
+    const b = cur.find((x) => x.type === ti);
+    if (!b) return `<div class="item"><span>${esc(tn)}</span><span class="chip">없음</span></div>`;
+    const [cls, txt] = b.revoked ? ["no", "정지"] : b.expired ? ["off", "만료"] : ["ok", `유효 · ${b.daysLeft}일 남음`];
+    return `<div class="item"><span>${esc(tn)} <span class="mono">#${b.tokenId} · ${new Date(b.expiresAt * 1000).toLocaleDateString("ko-KR")}까지</span></span><span class="chip ${cls}">${txt}</span></div>`;
+  }).join("");
+  $("vlist").innerHTML = cur.filter((b) => b.hasVc).map((b) => `<div class="item"><span>${esc(b.typeName)} <span class="mono">#${b.tokenId}</span></span>
+      <span><button class="btn ghost" data-vc="${b.tokenId}">보기</button> <button class="btn ghost" data-dl="${b.tokenId}">저장</button></span></div><div id="vc-${b.tokenId}"></div>`).join("")
+    || '<p class="empty">아직 VC가 없어요.</p>';
+  const rows = [
+    ...DATA.usage.map((u) => ({ at: u.endedAt, html: `<div class="item"><span>${esc(u.equipment)} · ${mmss(u.durationSec * 1000)}<br><span class="mono">${new Date(u.startedAt).toLocaleString("ko-KR")} · ${BY_KO[u.endedBy] || u.endedBy}</span></span>${u.aiReviewId ? `<span class="chip ${u.aiFlagged ? "wait" : "ok"}">AI ${u.aiFlagged ? "재교육 권고" : "정상"}</span>` : ""}</div>` })),
+    ...DATA.ai.filter((r) => r.source !== "auto").map((r) => ({ at: r.at * 1000, html: `<div class="item"><span>AI 분석 #${r.id} · 이상 점수 ${r.anomaly.toFixed(3)}<br><span class="mono">${esc(r.courses.join(", ") || "-")}</span></span><span class="chip ${r.status === "pending" || r.status === "suspended" ? "no" : "ok"}">${ST_KO[r.status]}</span></div>` })),
+  ];
+  const pendingAi = DATA.ai.find((r) => r.status === "pending" || r.status === "suspended");
+  $("alist").innerHTML = (pendingAi ? `<p class="warn">AI 권고 #${pendingAi.id}: ${ST_KO[pendingAi.status]} — ${esc(pendingAi.courses.join(", ") || "숙련도")}</p>` : "")
+    + (rows.length ? rows.slice(0, 8).map((r) => r.html).join("") : '<p class="empty">아직 작업 기록이 없어요.</p>');
+}
+async function loadVC(id, download) {
+  const d = await api("/api/me/vc", { token: ME.token, tokenId: +id });
+  const text = JSON.stringify(d.vc, null, 2);
+  if (download) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    a.download = `vc-badge-${id}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } else { const el = $("vc-" + id); el.innerHTML = el.innerHTML ? "" : `<pre>${esc(text)}</pre>`; }
+}
+function showWaiting(d) {
+  $("login").hidden = false; for (const id of ["home", "faceInfo", "badges", "vcs", "ai"]) $(id).hidden = true;
+  $("stepWallet").hidden = true; $("stepReg").hidden = d.status !== "rejected" && d.status !== "none"; $("stepWait").hidden = !$("stepReg").hidden;
+  $("waitName").textContent = d.name || ""; $("waitAddr").textContent = d.address;
+  if (d.status === "rejected") { $("loginErr").textContent = "발급기관이 등록을 거절했어요. 이름을 확인하고 다시 요청해 주세요."; $("loginErr").hidden = false; }
+}
+function render() {
+  ME = store.get();
+  const hasWallet = !!(ME && ME.key);
+  const logged = hasWallet && !!ME.token;
+  $("codeBox").hidden = isPC;
+  $("login").hidden = logged;
+  $("stepWallet").hidden = hasWallet; $("stepReg").hidden = !hasWallet || logged; $("stepWait").hidden = true;
+  if (hasWallet) $("myAddr").textContent = `${ME.address.slice(0, 8)}…${ME.address.slice(-6)}`;
+  for (const id of ["home", "faceInfo", "badges", "vcs", "ai"]) $(id).hidden = !logged;
+  $("me").innerHTML = logged && ME.name ? `${esc(ME.name)} <span class="mono" style="color:#AAB4C3">${ME.address.slice(0, 6)}…</span>` : "";
+  if (!logged) { $("using").hidden = true; $("scan").hidden = true; }
+  else { showScan(); refresh().catch((e) => { if (e.status === 401) { store.set({ ...store.get(), token: null }); render(); } }); }
+}
+$("mkWallet").onclick = () => {
+  const w = ethers.Wallet.createRandom();
+  store.set({ key: w.privateKey, address: w.address }); render();
+};
+$("regBtn").onclick = async () => {
+  const b = $("regBtn"); b.disabled = true; $("loginErr").hidden = true;
+  try {
+    if (!$("nm").value.trim()) throw new Error("이름을 입력해 주세요");
+    if (!faceStore.get()) { b.textContent = "얼굴 등록 중…"; await faceSession("enroll"); }
+    b.textContent = "등록 요청 보내는 중…";
+    const r = await authenticate($("nm").value.trim(), $("code").value.trim());
+    ME = store.get();
+    if (r.status === "approved") render(); else { showWaiting({ status: "pending", name: r.name, address: ME.address }); }
+  } catch (e) { $("loginErr").textContent = e.message; $("loginErr").hidden = false; }
+  finally { b.disabled = false; b.textContent = "이 지갑으로 등록 요청"; }
+};
+$("regAgain").onclick = () => { $("stepWait").hidden = true; $("stepReg").hidden = false; $("loginErr").hidden = true; };
+document.addEventListener("click", async (e) => {
+  const t = e.target.closest("button"); if (!t) return;
+  try {
+    if (t.dataset.vc) await loadVC(t.dataset.vc, false);
+    if (t.dataset.dl) await loadVC(t.dataset.dl, true);
+  } catch (err) { alert(err.message); }
+});
+window.addEventListener("hashchange", () => { readScan(); if (ME) showScan(); });
+readScan(); render();
+setInterval(() => { if (ME && ME.token) refresh().catch(() => {}); }, 4000);
+</script>
+</body>
+</html>
