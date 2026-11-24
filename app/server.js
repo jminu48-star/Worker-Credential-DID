@@ -10,7 +10,7 @@ const { exec } = require("child_process");
 const os = require("os");
 const crypto = require("crypto");
 const { EquipmentVerifier, signChallenge } = require("../scripts/verifier");
-const { createVC, verifyVC, vcHash } = require("../scripts/vc");
+const { createVC, verifyVC, vcHash, verifyVP } = require("../scripts/vc");
 const { SkillModel } = require("../scripts/ai");
 const phoneAI = require("../scripts/phone-ai");
 
@@ -77,6 +77,8 @@ let S; // 현재 상태 (배포·리셋 때 새로 만든다)
 // 화면의 기록 목록은 data/events.json 에 그대로 저장한다.
 const DATA_DIR = path.join(__dirname, "..", "data");
 const JOURNAL_FILE = path.join(DATA_DIR, "journal.json");
+// 휴대폰 작업자에게 보낼 VC의 "봉인된 우편함": 작업자 공개 키로 암호화한 것만 두고, 휴대폰이 받았다고 확인하면 지운다
+const OUTBOX_FILE = path.join(DATA_DIR, "vc-outbox.json");
 const EVENTS_FILE = path.join(DATA_DIR, "events.json");
 const AI_FILE = path.join(DATA_DIR, "ai.json"); // AI 판단 기록 (체인 밖 — 원본 센서 데이터는 체인에 올리지 않는다)
 const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // 끝난 운용 기록 (누가·어떤 장비를·언제부터·얼마나)
@@ -121,23 +123,30 @@ async function setup(fresh = false) {
   const verifiers = Object.fromEntries(EQUIPMENT.map((e) => [e.id, new EquipmentVerifier(badge, e.id, e.type)]));
   const attacker = signers[9]; // VC 위조 시뮬레이션용 — 발급 권한 없는 계정
   const { chainId } = await ethers.provider.getNetwork();
-  S = { issuer, attacker, chainId, workers, badge, verifiers, vcs: {}, events: [], aiReviews: [], qr: {}, eqLast: {}, lastSig: null, journal: [], replaying: false,
+  S = { issuer, attacker, chainId, workers, badge, verifiers, vcs: {}, outbox: fresh ? {} : loadJSON(OUTBOX_FILE, {}), presented: {}, vpReqs: new Map(), certSeq: 0, events: [], aiReviews: [], qr: {}, eqLast: {}, lastSig: null, journal: [], replaying: false,
     sessions: {}, usage: [], eqStyle: {}, wallets: new Map(), pair: newPairCode(), regs: [] };
 
   const saved = fresh ? [] : loadJSON(JOURNAL_FILE, []);
   if (saved.length) {
     // ── 이전 기록 복원: 같은 시각·같은 순서로 다시 실행 ──
     S.replaying = true;
-    let failed = 0;
+    let failed = 0, migrated = 0;
     for (const op of saved) {
       try {
         const now = await chainNow();
         if (op.ts > now) await hre.network.provider.send("evm_setNextBlockTimestamp", [op.ts]);
         if (OLD_KEYS[op.worker]) op.worker = OLD_KEYS[op.worker]; // 예전 이름 기록 호환
         if (op.op === "bind" && OLD_KEYS[op.key]) op.key = OLD_KEYS[op.key];
-        if (op.op === "issue") await issue(op.worker, op.type, op.expiresAt, op.vc);
-        else if (op.op === "addWorker") addWorker(op.key, op.name, op.address, op.faceId);
-        else if (op.op === "bind") bindWorker(op.worker, op.address, op.faceId);
+        if (op.op === "issue") {
+          const { tokenId } = await issue(op.worker, op.type, op.expiresAt, op.vc, null, op.vcHash);
+          if (op.vc && W(op.worker).phone) { // 예전 기록: 휴대폰 작업자 VC 원문이 서버 기록에 남아 있음 → 우편함으로 옮기고 기록에서는 지운다
+            if (!S.outbox[tokenId]) deliver(W(op.worker), tokenId, op.vc);
+            op.vcHash = vcHash(op.vc); delete op.vc; migrated++;
+          }
+        }
+        else if (op.op === "addWorker") addWorker(op.key, op.name, op.address, op.faceId, op.pubKey);
+        else if (op.op === "bind") bindWorker(op.worker, op.address, op.faceId, op.pubKey);
+        else if (op.op === "pubkey") { const w = W(op.worker); if (w.address === op.address) w.pubKey = op.pubKey; }
         else if (op.op === "face") W(op.worker).faceId = cleanFid(op.faceId);
         else if (op.op === "revoke") await revokeBadge(op.tokenId, op.reason);
         else if (op.op === "renew") await renewBadge(op.tokenId, op.newExpiresAt);
@@ -145,6 +154,7 @@ async function setup(fresh = false) {
       } catch (e) { failed++; console.error("[복원 실패]", op, e?.shortMessage || e?.message); }
     }
     S.journal = saved;
+    if (migrated) { saveJSON(JOURNAL_FILE, saved); saveJSON(OUTBOX_FILE, S.outbox); }
     S.events = loadJSON(EVENTS_FILE, []).map((e) => ({ ...e, text: renameText(e.text) }));
     const legacy = (r) => { if (OLD_KEYS[r.worker]) { r.worker = OLD_KEYS[r.worker]; const w = S.workers.find((x) => x.key === r.worker); if (w) r.workerName = w.name; } return r; };
     S.aiReviews = loadJSON(AI_FILE, []).map(legacy);
@@ -157,11 +167,13 @@ async function setup(fresh = false) {
       await hre.network.provider.send("evm_mine");
     }
     addEvent("system", `이전 기록 ${saved.length - failed}건을 복원했어요${failed ? ` (실패 ${failed}건)` : ""}`);
+    if (migrated) addEvent("system", `휴대폰 작업자 VC ${migrated}개의 원문을 서버 기록에서 지우고 우편함으로 옮겼어요 (휴대폰이 접속하면 그 공개 키로 암호화 → 받아 가면 삭제)`);
     return;
   }
 
   // ── 처음 시작: 저장된 기록 없음 ──
   saveJSON(JOURNAL_FILE, []);
+  saveJSON(OUTBOX_FILE, {});
   saveJSON(EVENTS_FILE, []);
   saveJSON(AI_FILE, []);
   saveJSON(USAGE_FILE, []);
@@ -207,7 +219,7 @@ function friendlyError(e) {
 // VC 에 들어가는 "내용" — 체인에는 안 올라가고 작업자가 파일로 보관 (예시 값)
 const ISSUING_BODY = ["자격 발급기관(예시)", "자격 발급기관(예시)", "자격 발급기관(예시)", "사내 안전교육팀(예시)"];
 function claimsFor(w, type, extra) {
-  const certSeq = Object.keys(S.vcs).length + 1;
+  const certSeq = S.certSeq;
   return {
     name: w.name,
     certificateNo: `${["FL", "CR", "HZ", "SE"][type]}-${new Date().getFullYear()}-${String(certSeq).padStart(4, "0")}`,
@@ -217,27 +229,65 @@ function claimsFor(w, type, extra) {
   };
 }
 
-async function issue(workerKey, type, expiresAt, savedVc, extraClaims) {
+// ───────── VC 전달: 휴대폰 작업자는 "자기 VC를 자기가 보관" (DID·SSI 원칙) ─────────
+// 서버는 VC를 만들고 서명한 뒤, 작업자 지갑 공개 키로 암호화(ECDH secp256k1 + AES-256-GCM)해서 우편함에 넣는다.
+// 암호화에 쓴 임시 키는 바로 버리므로 서버도 다시 열 수 없다. 휴대폰이 받아서 지문을 확인하고 "받았다"고 하면 우편함에서도 지운다.
+// → 서버에 남는 것: 체인의 지문(vcHash)뿐. VC 원문은 작업자 휴대폰에만.
+function sealFor(pubKey, obj) {
+  const eph = new ethers.SigningKey(ethers.hexlify(crypto.randomBytes(32)));
+  const key = crypto.createHash("sha256").update(ethers.getBytes(eph.computeSharedSecret(pubKey))).digest();
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([c.update(JSON.stringify(obj), "utf8"), c.final(), c.getAuthTag()]);
+  return { alg: "ECDH-secp256k1+A256GCM", epk: eph.publicKey, iv: iv.toString("base64"), ct: ct.toString("base64") };
+}
+function deliver(w, tokenId, vc) {
+  // 공개 키를 아직 모르면(예전 등록) 휴대폰이 다음에 접속해 공개 키를 알려 줄 때까지 잠시 원문으로 두고, 그때 바로 암호화한다
+  S.outbox[tokenId] = w.pubKey ? { worker: w.key, hash: vcHash(vc), enc: sealFor(w.pubKey, vc), at: Date.now() }
+    : { worker: w.key, hash: vcHash(vc), plain: vc, at: Date.now() };
+  saveJSON(OUTBOX_FILE, S.outbox);
+}
+function sealPending(w) {
+  let n = 0;
+  for (const [id, o] of Object.entries(S.outbox)) if (o.worker === w.key && o.plain && w.pubKey) { S.outbox[id] = { ...o, enc: sealFor(w.pubKey, o.plain), plain: undefined }; n++; }
+  if (n) saveJSON(OUTBOX_FILE, S.outbox);
+}
+function setPubKey(w, pubKey) {
+  if (!pubKey || w.pubKey === pubKey) return false;
+  let ok = false; try { ok = ethers.computeAddress(pubKey) === w.address; } catch {}
+  if (!ok) return false;
+  w.pubKey = ethers.SigningKey.computePublicKey(pubKey, false);
+  return true;
+}
+
+async function issue(workerKey, type, expiresAt, savedVc, extraClaims, savedHash) {
   const w = W(workerKey);
+  S.certSeq++;
   // ① 발급기관이 VC(내용+서명)를 만든다 → ② 그 지문(vcHash)만 체인에 올린다
-  const vc = savedVc || await createVC({
+  const vc = savedVc || (savedHash ? null : await createVC({
     issuerSigner: S.issuer, chainId: S.chainId, contract: await S.badge.getAddress(), worker: w.address,
     badgeType: type, validFrom: await chainNow(), validUntil: expiresAt, claims: claimsFor(w, type, extraClaims),
-  });
-  const r = await (await S.badge.issue(w.address, type, expiresAt, vcHash(vc))).wait();
+  }));
+  const hash = savedHash || vcHash(vc);
+  const r = await (await S.badge.issue(w.address, type, expiresAt, hash)).wait();
   const id = Number(await S.badge.badgeOf(w.address, type));
-  S.vcs[id] = vc;
-  addEvent("issue", `${w.name}에게 '${TYPES[type]}' 배지 #${id} 발급 + VC 전달 (만료 ${fmtDate(expiresAt)})`, { gas: Number(r.gasUsed), tx: r.hash });
-  await journal({ op: "issue", worker: workerKey, type, expiresAt, vc });
+  if (w.phone) { if (vc && !S.replaying) deliver(w, id, vc); } // 휴대폰 작업자: 원문은 우편함(암호화)으로만
+  else if (vc) S.vcs[id] = vc; // 통합 화면 시연용 테스트 계정: 휴대폰이 없어서 서버가 대신 보관 (시연 전용)
+  addEvent("issue", `${w.name}에게 '${TYPES[type]}' 배지 #${id} 발급 + VC ${w.phone ? "휴대폰으로 암호화 전달 (서버엔 지문만)" : "전달"} (만료 ${fmtDate(expiresAt)})`, { gas: Number(r.gasUsed), tx: r.hash });
+  await journal(w.phone ? { op: "issue", worker: workerKey, type, expiresAt, vcHash: hash } : { op: "issue", worker: workerKey, type, expiresAt, vc });
   return { tokenId: id, gas: Number(r.gasUsed) };
 }
 
 // ───────── VC 보기·검증·위조 체험 ─────────
 function vcOf(tokenId) {
-  const vc = S.vcs[tokenId];
-  if (!vc) throw new Error("이 배지의 VC가 없어요 (이전 버전에서 만든 기록일 수 있어요)");
+  const vc = S.vcs[tokenId] || (S.presented[tokenId] && S.presented[tokenId].vc);
+  if (!vc) {
+    if (S.outbox[tokenId] || isPhoneBadge(tokenId)) throw new Error("이 VC는 작업자 휴대폰에만 있어요 (서버는 지문만 보관). 'VP 요청'으로 작업자에게 제시받으세요");
+    throw new Error("이 배지의 VC가 없어요 (이전 버전에서 만든 기록일 수 있어요)");
+  }
   return vc;
 }
+const isPhoneBadge = (tokenId) => !!(S.badgeOwner && S.badgeOwner[tokenId] && (byAddr(S.badgeOwner[tokenId]) || {}).phone);
 async function checkVC(vc, label) {
   const r = await verifyVC(vc, S.badge);
   const bad = r.steps.filter((s) => !s.ok).map((s) => s.label);
@@ -264,6 +314,49 @@ async function forgeVC(tokenId, kind) {
   throw new Error("모르는 위조 방법");
 }
 
+// ───────── VP: 검증자가 일회용 질문을 내고 → 작업자 휴대폰이 VC를 골라 서명해서 낸다 ─────────
+const VP_TTL_MS = 5 * 60_000, PRESENTED_TTL_MS = 30 * 60_000;
+function pruneVP() {
+  const now = Date.now();
+  for (const [k, r] of S.vpReqs) if (now - r.at > PRESENTED_TTL_MS) S.vpReqs.delete(k);
+  for (const [k, p] of Object.entries(S.presented)) if (now - p.at > PRESENTED_TTL_MS) delete S.presented[k];
+}
+function vpRequest(b) {
+  pruneVP();
+  const id = crypto.randomBytes(4).toString("hex"), challenge = crypto.randomBytes(16).toString("hex");
+  const domain = String(b.domain || "").trim().slice(0, 40) || "현장 감독관(예시)";
+  const req = { id, challenge, domain, at: Date.now(), expiresAt: Date.now() + VP_TTL_MS, status: "waiting", result: null };
+  S.vpReqs.set(id, req);
+  addEvent("system", `VP 요청: '${domain}' → 작업자 휴대폰에 자격 제시 요청 (일회용 질문 ${challenge.slice(0, 8)}…, 5분)`);
+  return { id, challenge, domain, expiresAt: req.expiresAt, url: `${publicBase()}/worker#vp=${id}.${challenge}` };
+}
+function vpReqPublic(q) {
+  const req = S.vpReqs.get(String(q.get("id")));
+  if (!req || req.challenge !== String(q.get("c"))) throw Object.assign(new Error("없는 요청이에요 (QR을 다시 찍어 주세요)"), { status: 404 });
+  return { domain: req.domain, status: req.status, expiresIn: Math.max(0, Math.round((req.expiresAt - Date.now()) / 1000)) };
+}
+function freshOf(req) {
+  if (!req) return { ok: false, detail: "이 검증자가 낸 질문이 아님" };
+  if (req.status === "done") return { ok: false, detail: "이미 한 번 쓴 질문 — 예전 VP를 다시 낸 것 (재사용 공격)" };
+  if (Date.now() > req.expiresAt) return { ok: false, detail: "질문 유효시간(5분)이 지남" };
+  return { ok: true, detail: `유효시간 ${Math.ceil((req.expiresAt - Date.now()) / 1000)}초 남음` };
+}
+async function checkVP(vp, req, label) {
+  const ch = String(vp?.proof?.challenge ?? "");
+  const r = await verifyVP(vp, S.badge, { challenge: req ? req.challenge : ch, domain: req ? req.domain : vp?.proof?.domain, fresh: freshOf(req) });
+  const signed = !!r.steps.find((x) => x.key === "holderSig" && x.ok);
+  const names = (r.credentials || []).map((c) => c.tokenId ? `#${c.tokenId}` : "?").join(", ");
+  if (req && req.status !== "done" && signed && ch === req.challenge) { // 질문은 한 번만 쓸 수 있다
+    req.status = "done";
+    req.result = { ok: r.ok, steps: r.steps, credentials: r.credentials, holder: r.holder, worker: nameOf(r.holder), at: Date.now() };
+  }
+  if (r.ok) (r.credentials || []).forEach((c, i) => { if (c.tokenId) S.presented[c.tokenId] = { vc: vp.verifiableCredential[i], at: Date.now(), by: req && req.domain }; });
+  addEvent(r.ok ? "allow" : "deny", `VP 검증${label ? ` (${label})` : ""}: ${r.holder ? nameOf(r.holder) + " " : ""}${names ? `배지 ${names} ` : ""}${r.ok ? "통과" : "실패 — " + r.steps.filter((x) => !x.ok).map((x) => x.label).join(", ")}`);
+  return { ...r, kind: "vp", vp, worker: r.holder ? nameOf(r.holder) : null };
+}
+const parseJSON = (v) => { if (typeof v !== "string") return v; try { return JSON.parse(v); } catch { throw new Error("JSON 형식이 아니에요 (괄호·따옴표를 확인하세요)"); } };
+const findVpReq = (vp) => [...S.vpReqs.values()].find((r) => r.challenge === String(vp?.proof?.challenge ?? ""));
+
 async function revokeBadge(tokenId, reason) {
   const r = await (await S.badge.revoke(tokenId, reason)).wait();
   addEvent("revoke", `배지 #${tokenId} 정지 — 사유: ${reason}`, { gas: Number(r.gasUsed) });
@@ -288,10 +381,13 @@ async function listBadges() {
     const owner = await S.badge.ownerOf(id);
     const current = Number(await S.badge.badgeOf(owner, b.badgeType)) === id;
     const expired = Number(b.expiresAt) <= now;
+    (S.badgeOwner ||= {})[id] = owner;
+    const ow = byAddr(owner);
+    const vcWhere = S.vcs[id] ? "server" : S.outbox[id] ? "outbox" : ow && ow.phone ? "phone" : null;
     out.push({
       tokenId: id, worker: nameOf(owner), workerKey: (byAddr(owner) || {}).key,
       type: Number(b.badgeType), typeName: TYPES[Number(b.badgeType)], expiresAt: Number(b.expiresAt),
-      revoked: b.revoked, expired, valid: !b.revoked && !expired, current, vcHash: short(b.vcHash), hasVc: !!S.vcs[id],
+      revoked: b.revoked, expired, valid: !b.revoked && !expired, current, vcHash: short(b.vcHash), vcHashFull: b.vcHash, hasVc: !!S.vcs[id] || !!S.presented[id], vcWhere, vcInbox: !!S.outbox[id], presented: !!S.presented[id],
       daysLeft: Math.floor((Number(b.expiresAt) - now) / DAY),
     });
   }
@@ -464,16 +560,18 @@ const REG_MESSAGE = (name, address, ts) => `WorkerBadge 작업자 등록\n이름
 // faceId: 휴대폰이 얼굴을 등록할 때 만든 무작위 번호 (얼굴 자체가 아니라 "어느 등록본인지"만 가리킴).
 // 발급기관이 승인한 faceId 와 다른 얼굴 등록본으로는 시동이 안 된다 → 휴대폰을 빌려 남의 얼굴로 바꿔 등록해도 소용없음
 const cleanFid = (f) => (typeof f === "string" && /^[0-9a-f]{16}$/.test(f) ? f : null);
-function addWorker(key, name, address, faceId = null) {
+function addWorker(key, name, address, faceId = null, pubKey = null) {
   if (byAddr(address)) throw new Error("이미 등록된 지갑이에요");
-  const w = { key, name, address: ethers.getAddress(address), signer: null, phone: true, faceId: cleanFid(faceId) };
+  const w = { key, name, address: ethers.getAddress(address), signer: null, phone: true, faceId: cleanFid(faceId), pubKey: null };
+  setPubKey(w, pubKey);
   S.workers.push(w);
   return w;
 }
-function bindWorker(key, address, faceId = null) {
+function bindWorker(key, address, faceId = null, pubKey = null) {
   const w = W(key);
   if (byAddr(address)) throw new Error("이미 다른 작업자에 연결된 지갑이에요");
-  w.address = ethers.getAddress(address); w.signer = null; w.phone = true; w.faceId = cleanFid(faceId);
+  w.address = ethers.getAddress(address); w.signer = null; w.phone = true; w.faceId = cleanFid(faceId); w.pubKey = null;
+  setPubKey(w, pubKey);
   return w;
 }
 // 로그인 토큰은 8시간(한 근무 시간) 뒤 만료 — 휴대폰은 401 을 받으면 지갑 서명으로 자동 재로그인한다
@@ -515,8 +613,11 @@ async function registerRequest(b, local, ip = "?") {
   let signer;
   try { signer = ethers.verifyMessage(REG_MESSAGE(name, address, ts), String(b.signature)); } catch { signer = null; }
   if (signer !== address) throw Object.assign(new Error("서명이 지갑 주소와 맞지 않아요 (그 지갑의 주인만 등록할 수 있어요)"), { status: 403 });
+  // 서명에서 공개 키를 복원 — VC를 이 휴대폰만 열 수 있게 암호화할 때 쓴다 (공개 키라서 알려져도 괜찮음)
+  const pubKey = ethers.SigningKey.recoverPublicKey(ethers.hashMessage(REG_MESSAGE(name, address, ts)), String(b.signature));
   const faceId = cleanFid(b.faceId);
   const known = byAddr(address);
+  if (known && known.phone && setPubKey(known, pubKey)) { await journal({ op: "pubkey", worker: known.key, address, pubKey: known.pubKey }); sealPending(known); }
   if (known) { // 이미 등록된 휴대폰 → 다시 로그인. 얼굴을 새로 등록했으면 발급기관 승인 요청을 만든다
     if (faceId && faceId !== known.faceId && !S.regs.some((r) => r.kind === "face" && r.address === address && r.faceId === faceId && r.status === "pending")) {
       for (const r of S.regs) if (r.kind === "face" && r.address === address && r.status === "pending") r.status = "replaced";
@@ -541,10 +642,12 @@ async function registerRequest(b, local, ip = "?") {
   }
   let reg = S.regs.find((r) => r.address === address && r.status === "pending");
   if (reg && faceId && reg.faceId !== faceId) { reg.faceId = faceId; reg.face = true; }
+  if (reg) reg.pubKey = pubKey;
   if (!reg) {
     reg = { id: (S.regs.at(-1)?.id || 0) + 1, name, address, at: Date.now(), status: "pending", via: local ? "이 PC" : "휴대폰",
       face: !!faceId, faceId, // 휴대폰에 얼굴을 등록했는지 (얼굴 데이터는 휴대폰에만 있고 서버로 오지 않는다)
       match: (S.workers.find((w) => w.name === name) || {}).key || null };
+    reg.pubKey = pubKey;
     S.regs.push(reg);
     addEvent("system", `작업자 등록 요청: ${name} (${address.slice(0, 6)}…${address.slice(-4)}, ${reg.via}) — 발급기관 확인 필요`);
   }
@@ -565,8 +668,8 @@ async function registerDecide(id, action, workerKey) {
   }
   if (action === "new") {
     let key = "w" + crypto.randomBytes(3).toString("hex");
-    addWorker(key, reg.name, reg.address, reg.faceId);
-    await journal({ op: "addWorker", key, name: reg.name, address: reg.address, faceId: reg.faceId });
+    addWorker(key, reg.name, reg.address, reg.faceId, reg.pubKey);
+    await journal({ op: "addWorker", key, name: reg.name, address: reg.address, faceId: reg.faceId, pubKey: reg.pubKey || null });
     reg.status = "approved"; reg.worker = key;
     addEvent("system", `새 작업자 등록: ${reg.name} 📱 (${reg.address.slice(0, 6)}…${reg.address.slice(-4)}) — 이제 이 주소로 배지를 발급하세요`);
     return { reg };
@@ -577,8 +680,8 @@ async function registerDecide(id, action, workerKey) {
     const old = w.address;
     const now = await chainNow();
     const keep = (await listBadges()).filter((x) => x.workerKey === w.key && x.current && x.valid);
-    bindWorker(w.key, reg.address, reg.faceId);
-    await journal({ op: "bind", worker: w.key, address: reg.address, faceId: reg.faceId });
+    bindWorker(w.key, reg.address, reg.faceId, reg.pubKey);
+    await journal({ op: "bind", worker: w.key, address: reg.address, faceId: reg.faceId, pubKey: reg.pubKey || null });
     for (const x of keep) {
       await revokeBadge(x.tokenId, "휴대폰 지갑 교체 — 새 주소로 재발급");
       await issue(w.key, x.type, Math.max(x.expiresAt, now + DAY), null, { reissuedFrom: x.tokenId });
@@ -601,9 +704,10 @@ function workerOfToken(token) {
   if (!w) throw Object.assign(new Error("아직 발급기관이 등록을 승인하지 않았어요"), { status: 409 });
   return w;
 }
-async function me(token) {
+async function me(token, pubKey) {
   const { address } = walletOf(token);
   const w = byAddr(address);
+  if (w && w.phone && pubKey && setPubKey(w, String(pubKey))) { await journal({ op: "pubkey", worker: w.key, address: w.address, pubKey: w.pubKey }); sealPending(w); }
   if (!w) {
     const reg = [...S.regs].reverse().find((r) => r.address === address);
     return { registered: false, address, status: reg ? reg.status : "none", name: reg && reg.name };
@@ -773,7 +877,7 @@ function sensorUndo(b) {
 }
 
 const PUBLIC_ROUTES = new Set(["GET /api/eq/state", "POST /api/eq/challenge", "POST /api/eq/verify", "POST /api/register",
-  "POST /api/me", "POST /api/me/vc", "POST /api/session/end", "POST /api/sensor/upload", "POST /api/sensor/stats", "POST /api/sensor/undo"]);
+  "POST /api/me", "POST /api/me/vc/inbox", "POST /api/me/vc/ack", "GET /api/vp/req", "POST /api/vp/submit", "POST /api/session/end", "POST /api/sensor/upload", "POST /api/sensor/stats", "POST /api/sensor/undo"]);
 const routes = {
   "GET /api/state": async () => state(),
   "POST /api/issue": async (b) => issue(b.worker, Number(b.type), (await chainNow()) + Number(b.days) * DAY),
@@ -794,11 +898,25 @@ const routes = {
   "POST /api/replay": async () => replay(),
   "POST /api/transfer": async (b) => transfer(b.from, b.to, Number(b.tokenId)),
   "POST /api/reset": async () => { await setup(true); return {}; },
-  "POST /api/vc": async (b) => { const vc = vcOf(Number(b.tokenId)); return { vc, hash: vcHash(vc) }; },
+  "POST /api/vc": async (b) => { const vc = vcOf(Number(b.tokenId)); const p = S.presented[Number(b.tokenId)];
+    return { vc, hash: vcHash(vc), source: S.vcs[Number(b.tokenId)] ? "server" : "presented", presentedBy: p && p.by }; },
   "POST /api/vc/verify": async (b) => {
-    let vc = b.vc;
-    if (typeof vc === "string") { try { vc = JSON.parse(vc); } catch { throw new Error("JSON 형식이 아니에요 (괄호·따옴표를 확인하세요)"); } }
-    return checkVC(vc, b.label);
+    const doc = parseJSON(b.vc);
+    if (doc && Array.isArray(doc.type) && doc.type.includes("VerifiablePresentation")) return checkVP(doc, findVpReq(doc), b.label || "붙여 넣은 VP");
+    return checkVC(doc, b.label);
+  },
+  "POST /api/vp/request": async (b) => vpRequest(b),
+  "GET /api/vp/status": async (_, q) => {
+    const req = S.vpReqs.get(String(q.get("id")));
+    if (!req) throw new Error("없는 VP 요청이에요");
+    return { id: req.id, domain: req.domain, status: req.status, expired: Date.now() > req.expiresAt, expiresIn: Math.max(0, Math.round((req.expiresAt - Date.now()) / 1000)), result: req.result };
+  },
+  "GET /api/vp/req": async (_, q) => vpReqPublic(q),
+  "POST /api/vp/submit": async (b) => {
+    const req = S.vpReqs.get(String(b.id));
+    if (!req) throw Object.assign(new Error("없는 요청이에요 (QR을 다시 찍어 주세요)"), { status: 404 });
+    const r = await checkVP(parseJSON(b.vp), req, "휴대폰 제시");
+    return { ok: r.ok, steps: r.steps, credentials: (r.credentials || []).map((c) => ({ ok: c.ok, tokenId: c.tokenId, steps: c.steps })), domain: req.domain };
   },
   "POST /api/vc/forge": async (b) => forgeVC(Number(b.tokenId), b.kind),
   "GET /api/eq/state": async (_, q) => ({ equipment: EQ(q.get("eq")), qr: await currentQR(q.get("eq")), last: S.eqLast[q.get("eq")] || null,
@@ -825,12 +943,22 @@ const routes = {
     if (b.token) { const w = workerOfToken(b.token); if (x && x.worker === w.key) return endSession(b.eq, "phone"); }
     return endSession(b.eq, ["equipment", "seat", "admin"].includes(b.by) ? b.by : "equipment");
   },
-  "POST /api/me": async (b) => me(b.token),
-  "POST /api/me/vc": async (b) => {
-    const worker = workerOfToken(b.token).key;
-    const badge = (await listBadges()).find((x) => x.tokenId === Number(b.tokenId));
-    if (!badge || badge.workerKey !== worker) throw Object.assign(new Error("내 배지의 VC만 볼 수 있어요"), { status: 403 });
-    const vc = vcOf(Number(b.tokenId)); return { vc, hash: vcHash(vc) };
+  "POST /api/me": async (b) => me(b.token, b.pubKey),
+  // 휴대폰이 우편함에서 자기 VC(암호문)를 받아 간다 → 지문을 확인해 보관한 뒤 ack → 서버 우편함에서 삭제
+  "POST /api/me/vc/inbox": async (b) => {
+    const w = workerOfToken(b.token);
+    if (b.pubKey && setPubKey(w, String(b.pubKey))) await journal({ op: "pubkey", worker: w.key, address: w.address, pubKey: w.pubKey });
+    sealPending(w);
+    const items = Object.entries(S.outbox).filter(([, o]) => o.worker === w.key);
+    if (items.some(([, o]) => !o.enc)) throw new Error("휴대폰 공개 키를 아직 몰라서 VC를 암호화하지 못했어요. 새로 고침 해 주세요");
+    return { items: items.map(([id, o]) => ({ tokenId: Number(id), hash: o.hash, enc: o.enc })) };
+  },
+  "POST /api/me/vc/ack": async (b) => {
+    const w = workerOfToken(b.token);
+    let n = 0;
+    for (const id of (Array.isArray(b.tokenIds) ? b.tokenIds : []).map(Number)) if (S.outbox[id] && S.outbox[id].worker === w.key) { delete S.outbox[id]; n++; }
+    if (n) { saveJSON(OUTBOX_FILE, S.outbox); addEvent("system", `${w.name} 휴대폰이 VC ${n}개를 받아 보관 — 서버 우편함에서 원문(암호문) 삭제, 서버엔 지문만`); }
+    return { removed: n };
   },
   "POST /api/net/base": async (b) => {
     const v = String(b.base || "").trim().replace(/\/$/, "");
