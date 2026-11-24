@@ -1,0 +1,10 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "address": "0x17e717EdC96ac69c7c3bF0122fCb068Af6BB5002",
+  "admin": "0x196B76bB385332075cc67FBF60808a24E954A099",
+  "tx": "0x83f0577c9d4e35d13519a3226a768cb111be37b45af62c41fbcee0e43f569941",
+  "block": 12032430,
+  "gasUsed": 14006494,
+  "deployedAt": "2026-10-31T07:46:26.467Z"
+}
