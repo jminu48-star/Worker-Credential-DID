@@ -264,11 +264,22 @@ body[data-view="admin"] .grid{grid-template-columns:minmax(0,1.25fr) minmax(0,.7
 
   <!-- VC -->
   <section class="panel" aria-labelledby="h-vc" style="margin-top:14px">
-    <h2 id="h-vc"><span class="tag">VC</span> 작업자가 가진 자격증명서 확인 (2단계)</h2>
-    <p class="sub">배지를 발급할 때 발급기관이 서명한 증명서(VC)도 함께 작업자에게 줘요. 다른 회사·감독관에게 자격을 보여 줄 때 이 파일을 내면, 받는 쪽이 서명과 체인 기록을 대조해서 진짜인지 확인해요.</p>
+    <h2 id="h-vc"><span class="tag">VC · VP</span> 작업자가 가진 자격증명서 확인 (2단계)</h2>
+    <p class="sub">배지를 발급할 때 발급기관이 서명한 증명서(VC)를 <b>작업자 휴대폰 공개 키로 암호화</b>해서 보내요. 휴대폰이 받으면 서버 사본은 지워져서, VC 원문은 <b>작업자 휴대폰에만</b> 있어요. 감독관은 VP 요청 QR을 보여 주고, 작업자는 VC를 골라 <b>자기 지갑 서명(VP)</b>을 붙여 제시해요.</p>
     <div class="split">
       <div><b>⛓ 블록체인에 있는 것</b>유효 여부(정지·만료)와 VC의 지문(해시)만. 누구나 볼 수 있어서 이름은 안 올려요.</div>
-      <div><b>📄 VC 파일에 있는 것</b>이름·자격번호·발급기관 같은 내용 + 발급기관 서명. 작업자만 갖고 있어요.</div>
+      <div><b>📱 작업자 휴대폰에 있는 것</b>VC 원문(이름·자격번호·발급기관 + 발급기관 서명)과 지갑 개인 키. 서버에는 지문만 남아요.</div>
+    </div>
+    <div class="attack" style="margin:0 0 14px;border-top:0;padding-top:0">
+      <h3>📱 작업자에게 VP 요청 (감독관·다른 회사 입장)</h3>
+      <div class="row" style="align-items:flex-end">
+        <label class="f" style="flex:1">검증자 이름 (VP에 서명돼 들어가요)<input id="vpDomain" value="현장 감독관(예시)" maxlength="40"></label>
+        <button class="btn" id="vpReq">VP 요청 QR 만들기</button>
+      </div>
+      <div id="vpBox" hidden style="grid-template-columns:150px 1fr;gap:14px;align-items:start;margin-top:10px">
+        <div id="vpQR" style="background:#fff;padding:6px;border-radius:8px"></div>
+        <div><p class="sub" style="margin:0 0 4px" id="vpMsg"></p><p class="hash" id="vpUrl"></p></div>
+      </div>
     </div>
     <div class="vcgrid">
       <div>
@@ -277,7 +288,7 @@ body[data-view="admin"] .grid{grid-template-columns:minmax(0,1.25fr) minmax(0,.7
           <button class="btn ghost" id="vLoad">VC 불러오기</button>
           <button class="btn ghost" id="vSave">파일로 저장</button>
         </div>
-        <label class="f">VC 원문 (직접 고쳐서 검증해 봐도 돼요)<textarea id="vText" class="vcbox" spellcheck="false" placeholder="배지를 고르고 'VC 불러오기'를 누르세요."></textarea></label>
+        <label class="f">VC 원문 (직접 고쳐서 검증해 봐도 돼요 · VP 파일을 넣으면 VP로 검증)<textarea id="vText" class="vcbox" spellcheck="false" placeholder="배지를 고르고 'VC 불러오기'를 누르세요."></textarea></label>
         <p class="hash" id="vHash"></p>
       </div>
       <div>
@@ -359,15 +370,17 @@ async function refresh() {
   keepSel($("kSigner"), ST.workers.map((w, i) => opt(w.key, w.name, i === 1)).join(""));
   keepSel($("iType"), ST.types.map((t, i) => opt(i, t)).join(""));
   keepSel($("mWorker"), wOpts);
-  keepSel($("vBadge"), ST.badges.filter((b) => b.hasVc).map((b) => opt(b.tokenId, `#${b.tokenId} ${b.worker} · ${b.typeName}${b.current ? "" : " (예전 배지)"}`)).join(""));
+  keepSel($("vBadge"), ST.badges.filter((b) => b.hasVc).map((b) => opt(b.tokenId, `#${b.tokenId} ${b.worker} · ${b.typeName}${b.vcWhere === "server" ? " (시연용 · 서버 보관)" : " (VP로 제시받은 사본)"}${b.current ? "" : " (예전 배지)"}`)).join(""));
   keepSel($("tBadge"), ST.badges.map((b) => opt(`${b.tokenId}|${b.workerKey}`, `#${b.tokenId} ${b.worker} · ${b.typeName}`)).join(""));
 
   // 배지 표
   $("badges").innerHTML = ST.badges.map((b) => {
     const [cls, txt] = b.revoked ? ["no", "정지"] : b.expired ? ["off", "만료"] : ["ok", "유효"];
     const left = b.revoked ? "-" : b.expired ? "만료됨" : `${b.daysLeft}일`;
+    const vcBtn = b.hasVc ? `<button class="btn sm ghost" data-vc="${b.tokenId}">VC</button>`
+      : b.vcWhere ? `<button class="btn sm ghost" data-vpreq="${b.tokenId}" title="VC는 작업자 휴대폰에만 있어요">${b.vcInbox ? "📨 VP" : "📱 VP"}</button>` : "";
     const actions = b.revoked ? "" :
-      `<button class="btn sm ghost" data-vc="${b.tokenId}">VC</button> <button class="btn sm ghost" data-renew="${b.tokenId}">+365일</button> <button class="btn sm danger" data-revoke="${b.tokenId}">정지</button>`;
+      `${vcBtn} <button class="btn sm ghost" data-renew="${b.tokenId}">+365일</button> <button class="btn sm danger" data-revoke="${b.tokenId}">정지</button>`;
     return `<tr${b.current ? "" : ' style="opacity:.55"'}><td class="num">${b.tokenId}</td><td>${esc(b.worker)}</td><td>${esc(b.typeName)}</td><td><span class="status ${cls}">${txt}</span></td><td>${left}</td><td>${actions}</td></tr>`;
   }).join("") || `<tr><td colspan="6" class="empty">발급된 배지가 없어요.</td></tr>`;
 
@@ -507,7 +520,38 @@ function renderAI() {
   }).join("") : '<p class="empty">아직 권고가 없어요.</p>';
 }
 
+let vpTimer = null;
+async function requestVP() {
+  const d = await api("/api/vp/request", { domain: $("vpDomain").value });
+  const q = qrcode(0, "M"); q.addData(d.url); q.make();
+  $("vpQR").innerHTML = q.createSvgTag({ cellSize: 3, margin: 1, scalable: true });
+  $("vpUrl").textContent = d.url; $("vpBox").hidden = false; $("vpBox").style.display = "grid";
+  $("vpMsg").textContent = `작업자가 휴대폰 기본 카메라로 찍으면 자격 제시 화면이 열려요 · 일회용 질문 ${d.challenge.slice(0, 8)}…`;
+  clearInterval(vpTimer);
+  vpTimer = setInterval(async () => {
+    let st; try { st = await api(`/api/vp/status?id=${d.id}`); } catch { return; }
+    if (st.status === "done") {
+      clearInterval(vpTimer); $("vpBox").hidden = true; $("vpBox").style.display = "none";
+      showVP(st.result, `${st.result.worker || ""} 휴대폰이 '${st.domain}'에 제시`);
+      toast(st.result.ok ? "✅ VP 확인 — 작업자가 직접 제시한 진짜 자격" : "❌ VP 확인 실패", !st.result.ok);
+      const first = (st.result.credentials || []).find((c) => c.tokenId);
+      if (st.result.ok && first) { await refresh(); try { await loadVC(first.tokenId); } catch {} }
+    } else if (st.expired) { clearInterval(vpTimer); $("vpMsg").textContent = "⏱ 5분이 지나 이 요청은 만료됐어요. 다시 만들어 주세요."; }
+    else $("vpMsg").textContent = `휴대폰 제시 기다리는 중… (${st.expiresIn}초 남음) · 일회용 질문 ${d.challenge.slice(0, 8)}…`;
+  }, 1500);
+}
+const stepList = (steps) => `<ol class="vsteps">${steps.map((s) => `<li class="${s.ok ? "ok" : "no"}"><span class="m">${s.ok ? "✓" : "✗"}</span><div><b>${esc(s.label)}</b><div class="d">${esc(s.detail)}</div></div></li>`).join("")}</ol>`;
+function showVP(r, title) {
+  const cls = r.ok ? "ok" : "no";
+  $("vResult").className = "result " + cls;
+  $("vResult").innerHTML = `
+    <div class="verdict ${cls}">${r.ok ? "✅ 진짜 VP — 작업자가 직접 제시" : "❌ 믿을 수 없는 VP"}</div>
+    <div style="font-size:13px;margin-top:2px">${esc(title)}</div>
+    ${stepList(r.steps)}
+    ${(r.credentials || []).map((c, i) => `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px">VC ${i + 1}${c.tokenId ? ` · 배지 #${c.tokenId}` : ""} — ${c.ok ? "6단계 통과" : "실패"}</summary>${stepList(c.steps)}</details>`).join("")}`;
+}
 function showVC(r, title) {
+  if (r.kind === "vp") return showVP(r, title);
   const cls = r.ok ? "ok" : "no";
   $("vResult").className = "result " + cls;
   $("vResult").innerHTML = `
@@ -520,7 +564,7 @@ async function loadVC(tokenId) {
   const r = await api("/api/vc", { tokenId: +tokenId });
   $("vBadge").value = String(tokenId);
   $("vText").value = JSON.stringify(r.vc, null, 2);
-  $("vHash").textContent = "체인에 저장된 지문과 같아야 하는 값: " + r.hash;
+  $("vHash").textContent = (r.source === "presented" ? `📱 ${r.presentedBy || "검증자"}가 VP로 제시받은 사본 (메모리에만, 30분 뒤 지움) · ` : "🧪 시연용 테스트 계정 VC (휴대폰이 없어 서버가 대신 보관) · ") + "체인 지문: " + r.hash;
   return r;
 }
 
@@ -535,6 +579,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.eq) { selectedEq = t.dataset.eq; document.querySelectorAll(".eq").forEach((b) => b.setAttribute("aria-pressed", b.dataset.eq === selectedEq)); return; }
   if (t.dataset.revoke) return run(t, async () => { await api("/api/revoke", { tokenId: +t.dataset.revoke, reason: "관리자 정지(사고·위반)" }); toast(`배지 #${t.dataset.revoke} 정지`); });
   if (t.dataset.vc) return run(t, async () => { await loadVC(t.dataset.vc); $("h-vc").scrollIntoView({ behavior: "smooth" }); toast(`배지 #${t.dataset.vc} 의 VC를 불러왔어요`); });
+  if (t.dataset.vpreq) return run(t, async () => { $("h-vc").scrollIntoView({ behavior: "smooth" }); await requestVP(); toast(`배지 #${t.dataset.vpreq} 의 VC는 작업자 휴대폰에 있어요 — QR을 찍어 제시받으세요`); });
   if (t.dataset.forge) return run(t, async () => {
     if (!$("vBadge").value) throw new Error("먼저 배지를 고르세요");
     const r = await api("/api/vc/forge", { tokenId: +$("vBadge").value, kind: t.dataset.forge });
@@ -573,6 +618,7 @@ $("tBtn").onclick = (e) => run(e.target, async () => {
 $("baseBtn").onclick = (e) => run(e.target, async () => { await api("/api/net/base", { base: $("baseIn").value }); phoneDrawn = ""; toast($("baseIn").value.trim() ? "주소를 적용했어요" : "자동 주소로 돌아갔어요"); });
 $("mBtn").onclick = (e) => run(e.target, async () => { const d = await api("/api/ai/analyze", { worker: $("mWorker").value, style: $("mStyle").value }); showAI(d); });
 $("vLoad").onclick = (e) => run(e.target, async () => { if (!$("vBadge").value) throw new Error("VC가 있는 배지가 없어요"); await loadVC($("vBadge").value); $("vResult").className = "result"; $("vResult").innerHTML = '<p class="empty">불러왔어요. 이제 검증해 보세요.</p>'; });
+$("vpReq").onclick = (e) => run(e.target, requestVP);
 $("vCheck").onclick = (e) => run(e.target, async () => {
   if (!$("vText").value.trim()) throw new Error("VC 원문이 비어 있어요");
   const r = await api("/api/vc/verify", { vc: $("vText").value, label: "직접 입력" });
